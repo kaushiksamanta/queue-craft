@@ -13,9 +13,11 @@ export interface UserCreatedPayload {
 
 // Define order placed payload interface
 export interface OrderPlacedPayload {
-  orderId: string;
+  id: string;
   userId: string;
-  amount: number;
+  items: Array<{ productId: string; quantity: number; price: number }>;
+  total: number;
+  placedAt: string;
 }
 
 // Define error test payload interface

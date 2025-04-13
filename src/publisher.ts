@@ -29,7 +29,7 @@ export class Publisher<T extends EventPayloadMap = EventPayloadMap> {
    * Initializes the publisher
    * @returns Promise that resolves when the publisher is initialized
    */
-  async initialize(): Promise<void> {
+  private async initialize(): Promise<void> {
     await this.connectionManager.connect();
     await this.connectionManager.assertExchange(this.exchangeName, this.options.exchange);
   }

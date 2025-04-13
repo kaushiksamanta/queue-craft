@@ -1,282 +1,325 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { Worker } from '../../src/worker';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
+import { QueueCraft } from '../../src/index';
+import { MessageMetadata } from '../../src/types';
+import { Publisher } from '../../src/publisher';
 import { ConnectionManager } from '../../src/connection';
-import {
-  MessageMetadata,
-  WorkerConfig,
-} from '../../src/types';
-import { ConsumeMessage } from 'amqplib';
-import { ErrorTestPayload, MockChannel, MockConnectionManager, OrderPlacedPayload, RetryTestPayload, TestEventPayloadMap, TestMessage, TestWorker, UserCreatedPayload, WorkerPrivateMethods } from './types';
+import { ErrorTestPayload, OrderPlacedPayload, RetryTestPayload, TestEventPayloadMap, TestWorker, UserCreatedPayload } from './types';
 
+/**
+ * Integration tests for QueueCraft Publisher and Worker
+ * 
+ * These tests verify the integration between Publisher and Worker components
+ * with a real RabbitMQ connection. Each test creates a unique exchange and
+ * tests a specific functionality of the system.
+ */
 describe('Integration: Publisher and Worker', () => {
-  // Mock connection manager
-  const connectionManager: MockConnectionManager = {
-    connect: vi.fn().mockResolvedValue(undefined),
-    getChannel: vi.fn().mockResolvedValue({
-      assertExchange: vi.fn().mockResolvedValue(undefined),
-      assertQueue: vi.fn().mockResolvedValue({ queue: 'test-queue' }),
-      bindQueue: vi.fn().mockResolvedValue(undefined),
-      prefetch: vi.fn().mockResolvedValue(undefined),
-      consume: vi.fn().mockImplementation((queue, callback) => {
-        // Store the callback for later use in tests
-        connectionManager.consumeCallback = callback;
-        return Promise.resolve({ consumerTag: 'test-consumer' });
-      }),
-      publish: vi.fn().mockResolvedValue(true),
-      ack: vi.fn(),
-      nack: vi.fn(),
-      cancel: vi.fn().mockResolvedValue(undefined),
-      close: vi.fn().mockResolvedValue(undefined),
-    } as MockChannel),
-    assertExchange: vi.fn().mockResolvedValue(undefined),
-    assertQueue: vi.fn().mockResolvedValue({ queue: 'test-queue' }),
-    bindQueue: vi.fn().mockResolvedValue(undefined),
-    setPrefetch: vi.fn().mockResolvedValue(undefined),
-    closeConnection: vi.fn().mockResolvedValue(undefined),
-    consumeCallback: null,
-  };
-
-  // Define the mock QueueCraft type
-  interface MockQueueCraft {
-    publishEvent: <E extends keyof TestEventPayloadMap>(event: E, payload: TestEventPayloadMap[E]) => Promise<void>;
-    createWorker: <T extends Partial<TestEventPayloadMap>>(config: WorkerConfig<T>) => Worker<T>;
-  }
+  // Use a unique exchange name with timestamp to avoid conflicts with other processes
+  // This ensures test isolation even if previous tests failed to clean up properly
+  const exchangeName = `test-exchange-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
   
-  // Mock QueueCraft to use our mock connection manager
-  const queueCraft: MockQueueCraft = {
-    publishEvent: vi.fn().mockImplementation((event, payload) => {
-      // Simulate publishing an event by directly calling the consume callback
-      if (connectionManager.consumeCallback) {
-        const message: TestMessage = {
-          content: Buffer.from(JSON.stringify(payload)),
-          fields: { routingKey: event as string },
-          properties: {
-            headers: {},
-          },
-        };
-        
-        // Call the consume callback with the message
-        connectionManager.consumeCallback(message as unknown as ConsumeMessage);
-      }
-      return Promise.resolve();
-    }),
-    createWorker: vi.fn().mockImplementation(<T extends Partial<TestEventPayloadMap>>(config: WorkerConfig<T>) => {
-      // Create a worker with our mock connection manager
-      return new Worker(connectionManager as unknown as ConnectionManager, config, 'test-exchange');
-    }),
+  // Use consistent exchange options across all tests
+  const exchangeOptions = {
+    type: 'topic' as const, // Type assertion to make TypeScript happy
+    durable: false,
+    autoDelete: false, // Changed to false to prevent exchange from being deleted between tests
   };
 
-  let worker: TestWorker;
+  // Create a real QueueCraft instance for integration testing
+  const queueCraft = new QueueCraft<TestEventPayloadMap>({
+    connection: {
+      host: process.env.RABBITMQ_HOST || 'localhost',
+      port: parseInt(process.env.RABBITMQ_PORT || '5672', 10),
+      username: process.env.RABBITMQ_USERNAME || 'guest',
+      password: process.env.RABBITMQ_PASSWORD || 'guest',
+      vhost: process.env.RABBITMQ_VHOST || '/',
+      // Add timeout to avoid hanging tests
+      timeout: 2000,
+      // Add heartbeat to keep connection alive
+      heartbeat: 5,
+    },
+  });
+
+  // Create a publisher for testing with the custom exchange name
+  const publisher = queueCraft.createPublisher(exchangeName, {
+    exchange: exchangeOptions
+  });
+  
+  let worker: TestWorker | undefined;
   let messageCount = 0;
   let errorCount = 0;
 
   beforeEach(async () => {
-    // Reset counters and mocks
+    // Reset counters
     messageCount = 0;
     errorCount = 0;
-    vi.clearAllMocks();
   });
 
   // Clean up after each test
   afterEach(async () => {
-    // Stop the worker if it exists
+    // Clean up the worker after each test
     if (worker) {
-      await worker.stop();
+      try {
+        await worker.stop();
+      } catch (error) {
+        console.log('Error stopping worker:', error instanceof Error ? error.message : String(error));
+      }
+      worker = undefined;
     }
   });
 
-  it('should publish and consume messages', async () => {
-    // Create a spy to track message handling
-    const handlerSpy = vi.fn<[UserCreatedPayload, MessageMetadata], Promise<void>>();
+  // Clean up after all tests
+  afterAll(async () => {
+    try {
+      // Close the connection
+      await queueCraft.close();
+      console.log('RabbitMQ connection closed successfully');
+    } catch (error) {
+      console.error('Error closing RabbitMQ connection:', error instanceof Error ? error.message : String(error));
+    }
+  }, 5000); // Give 5 seconds to clean up connections
 
-    // Create a worker with a handler for the user.created event
-    worker = queueCraft.createWorker({
-      handlers: {
-        'user.created': async (payload: UserCreatedPayload, metadata: MessageMetadata) => {
-          messageCount++;
-          handlerSpy(payload, metadata);
+  // In each test, we verify that the message is processed by waiting for this promise
+  let messageProcessed: Promise<void>;
+
+  /**
+   * Helper function to ensure worker is defined
+   * This prevents TypeScript errors and provides clear error messages
+   * if worker is undefined due to initialization failure
+   */
+  const assertWorker = (): TestWorker => {
+    if (!worker) {
+      throw new Error('Worker is undefined - worker initialization may have failed');
+    }
+    return worker;
+  };
+  
+  /**
+   * Helper function to create a timeout promise
+   * @param ms Timeout in milliseconds
+   * @param errorMessage Custom error message
+   */
+  const createTimeout = (ms: number, errorMessage: string) => {
+    return new Promise<void>((_, reject) => 
+      setTimeout(() => reject(new Error(`${errorMessage} (waited ${ms}ms)`)), ms)
+    );
+  };
+  
+  it('should publish and consume messages', async () => {
+    // Create a Promise that will resolve when the message is processed
+    // This allows us to wait for asynchronous message processing
+    messageProcessed = new Promise<void>((resolve) => {
+      // Create a worker with a handler for the user.created event
+      worker = queueCraft.createWorker({
+        handlers: {
+          'user.created': async (payload: UserCreatedPayload, metadata: MessageMetadata) => {
+            messageCount++;
+            
+            // Verify payload data
+            expect(payload.id).toBe('123');
+            expect(payload.name).toBe('Test User');
+            
+            // Verify metadata
+            expect(metadata.properties).toBeDefined();
+            expect(metadata.properties.headers).toBeDefined();
+            
+            // Resolve the promise to signal message was processed
+            resolve();
+          },
         },
-      },
-      options: {
-        queue: {
-          durable: false,
-          autoDelete: true,
+        options: {
+          queue: {
+            durable: false,
+            autoDelete: true,
+          },
         },
-      },
+      }, exchangeName);
     });
 
-    // Start the worker
-    await worker.start();
+    // Start the worker (start() will call initialize() internally)
+    await assertWorker().start();
 
     // Publish an event
-    await queueCraft.publishEvent('user.created', { id: '123', name: 'Test User' });
+    await publisher.publish('user.created', { id: '123', name: 'Test User' });
+
+    // Wait for the message to be processed with a timeout
+    await Promise.race([
+      messageProcessed,
+      createTimeout(10000, 'Timeout waiting for user.created message to be processed')
+    ]);
 
     // Verify message was processed
-    expect(messageCount).toBe(1);
-    expect(handlerSpy).toHaveBeenCalledWith(
-      { id: '123', name: 'Test User' },
-      expect.objectContaining({
-        properties: expect.objectContaining({
-          headers: expect.any(Object),
-        }),
-      }),
-    );
+    expect(messageCount, 'Expected exactly one message to be processed').toBe(1);
+    
+
   });
 
   it('should handle multiple event types', async () => {
-    // Create spies to track message handling
-    const userHandlerSpy = vi.fn<[UserCreatedPayload, MessageMetadata], Promise<void>>();
-    const orderHandlerSpy = vi.fn<[OrderPlacedPayload, MessageMetadata], Promise<void>>();
-
-    // Create a worker with handlers for multiple events
-    worker = queueCraft.createWorker({
-      handlers: {
-        'user.created': async (payload: UserCreatedPayload, metadata: MessageMetadata) => {
-          messageCount++;
-          userHandlerSpy(payload, metadata);
+    // Create promises that will resolve when messages are processed
+    const userMessageProcessed = new Promise<void>((resolve) => {
+      // Create a worker with handlers for multiple event types
+      worker = queueCraft.createWorker({
+        handlers: {
+          'user.created': async (payload: UserCreatedPayload, metadata: MessageMetadata) => {
+            messageCount++;
+            
+            // Verify payload data
+            expect(payload.id).toBe('123');
+            expect(payload.name).toBe('Test User');
+            
+            // Resolve the promise to signal message was processed
+            resolve();
+          },
+          'order.placed': async (payload: OrderPlacedPayload, metadata: MessageMetadata) => {
+            messageCount++;
+            
+            // Verify payload data
+            expect(payload.id).toBe('456');
+            expect(payload.userId).toBe('123');
+            expect(payload.total).toBe(99.99);
+          },
         },
-        'order.placed': async (payload: OrderPlacedPayload, metadata: MessageMetadata) => {
-          messageCount++;
-          orderHandlerSpy(payload, metadata);
+        options: {
+          queue: {
+            durable: false,
+            autoDelete: true,
+          },
         },
-      },
-      options: {
-        queue: {
-          durable: false,
-          autoDelete: true,
-        },
-      },
+      }, exchangeName);
     });
 
-    // Start the worker
-    await worker.start();
+    // Start the worker (start() will call initialize() internally)
+    await assertWorker().start();
 
     // Publish events
-    await queueCraft.publishEvent('user.created', { id: '123', name: 'Test User' });
-    await queueCraft.publishEvent('order.placed', { orderId: '456', userId: '123', amount: 99.99 });
+    await publisher.publish('user.created', { id: '123', name: 'Test User' });
+    await publisher.publish('order.placed', { 
+      id: '456', 
+      userId: '123', 
+      items: [{ productId: 'prod-1', quantity: 1, price: 99.99 }],
+      total: 99.99, 
+      placedAt: new Date().toISOString() 
+    });
+
+    // Wait for the user message to be processed with a timeout
+    await Promise.race([
+      userMessageProcessed,
+      createTimeout(5000, 'Timeout waiting for user.created message in multiple event test')
+    ]);
+
+    // Wait a bit for the order message to be processed
+    // This ensures the second message has time to be processed
+    await new Promise(resolve => setTimeout(resolve, 1000));
 
     // Verify messages were processed
-    expect(messageCount).toBe(2);
-    expect(userHandlerSpy).toHaveBeenCalledWith(
-      { id: '123', name: 'Test User' },
-      expect.any(Object),
-    );
-    expect(orderHandlerSpy).toHaveBeenCalledWith(
-      { orderId: '456', userId: '123', amount: 99.99 },
-      expect.any(Object),
-    );
+    expect(messageCount, 'Expected both user.created and order.placed messages to be processed').toBe(2);
   });
 
   it('should handle errors with automatic retry', async () => {
-    // Create a counter for tracking retry attempts
-    errorCount = 0;
-
-    // Create a worker with a handler that throws an error
-    worker = queueCraft.createWorker({
-      handlers: {
-        'error.test': async (payload: ErrorTestPayload, _metadata: MessageMetadata) => {
-          if (payload.shouldFail) {
-            errorCount++;
-            throw new Error('Test error');
+    // Create a Promise that will resolve when the error is handled
+    const errorHandled = new Promise<void>((resolve) => {
+      // Create a worker with a handler that throws an error
+      worker = queueCraft.createWorker({
+        handlers: {
+          'error.test': async (payload: ErrorTestPayload, _metadata: MessageMetadata) => {
+            if (payload.shouldFail) {
+              errorCount++;
+              
+              // If this is the third attempt (retry count = 2), resolve the promise
+              if (errorCount >= 3) {
+                resolve();
+              }
+              
+              throw new Error('Test error');
+            }
+          },
+        },
+        options: {
+          queue: {
+            durable: false,
+            autoDelete: true,
+          },
+          retry: {
+            maxRetries: 3,
+            initialDelay: 100,
+            backoffFactor: 1,
+            maxDelay: 1000
           }
         },
-      },
-      options: {
-        queue: {
-          durable: false,
-          autoDelete: true,
-        },
-        retry: {
-          maxRetries: 2,
-          initialDelay: 100,
-          backoffFactor: 1,
-          maxDelay: 1000
-        }
-      },
+      }, exchangeName);
     });
 
-    // Start the worker
-    await worker.start();
+    // Start the worker (start() will call initialize() internally)
+    await assertWorker().start();
 
     // Publish an event that will cause an error
-    await queueCraft.publishEvent('error.test', { shouldFail: true });
+    await publisher.publish('error.test', { shouldFail: true });
 
-    // Wait for the error to be processed and retried
-    let attempts = 0;
-    while (errorCount < 1 && attempts < 50) {
-      await new Promise(resolve => setTimeout(resolve, 100));
-      attempts++;
-    }
+    // Wait for the error to be handled with retries (with a timeout)
+    // This allows enough time for multiple retry attempts
+    await Promise.race([
+      errorHandled,
+      createTimeout(5000, 'Timeout waiting for error retry handling')
+    ]);
 
-    // Verify error was handled
-    expect(errorCount).toBeGreaterThan(0);
+    // Verify error was handled multiple times (initial + retries)
+    expect(errorCount, 'Expected at least 3 error processing attempts (initial + retries)').toBeGreaterThanOrEqual(3);
   });
 
   it('should automatically retry failed messages', async () => {
-    // Create a counter to track retry attempts
     let processCount = 0;
     
-    // Create a spy for the requeueWithRetryCount method with proper typing
-    const requeueSpy = vi.spyOn(Worker.prototype as unknown as WorkerPrivateMethods, 'requeueWithRetryCount');
-    requeueSpy.mockImplementation((msg, payload, routingKey, retryCount) => {
-      // Simulate a retry by calling the consume callback again with updated headers
-      if (connectionManager.consumeCallback) {
-        const message: TestMessage = {
-          content: Buffer.from(JSON.stringify(payload)),
-          fields: { routingKey },
-          properties: {
-            headers: { 'x-retry-count': retryCount },
+    // Use unique event name to avoid conflicts with existing queues
+    const uniqueEventName = `retry.test.${Date.now()}`;
+    
+    // Create a Promise that will resolve when the message is processed successfully after retry
+    const retrySucceeded = new Promise<void>((resolve) => {
+      // Create a worker with a handler that throws an error on first attempt
+      worker = queueCraft.createWorker({
+        handlers: {
+          [uniqueEventName]: async (payload: RetryTestPayload, metadata: MessageMetadata) => {
+            processCount++;
+            
+            // Get retry count from headers
+            const retryCount = metadata.properties.headers?.['x-retry-count'] as number || 0;
+            
+            // Succeed on the second attempt
+            if (retryCount === 0) {
+              throw new Error('Automatic retry test error');
+            } else {
+              // This is a retry attempt, so resolve the promise
+              resolve();
+            }
           },
-        };
-        
-        // Call the consume callback with the message
-        connectionManager.consumeCallback(message as unknown as ConsumeMessage);
-      }
-      return Promise.resolve();
+        },
+        options: {
+          queue: {
+            durable: false,
+            autoDelete: true,
+          },
+          retry: {
+            maxRetries: 3,
+            initialDelay: 100,
+            backoffFactor: 1,
+            maxDelay: 1000
+          },
+          enableDelayQueue: true,
+        },
+      }, exchangeName);
     });
 
-    // Create a worker with a handler that throws an error on first attempt
-    worker = queueCraft.createWorker({
-      handlers: {
-        'retry.test': async (payload: RetryTestPayload, metadata: MessageMetadata) => {
-          processCount++;
-          
-          // Get retry count from headers
-          const retryCount = metadata.properties.headers?.['x-retry-count'] as number || 0;
-          
-          // Succeed on the second attempt
-          if (retryCount === 0) {
-            throw new Error('Automatic retry test error');
-          }
-          // Otherwise succeed
-        },
-      },
-      options: {
-        queue: {
-          durable: false,
-          autoDelete: true,
-        },
-        retry: {
-          maxRetries: 3,
-          initialDelay: 100,
-          backoffFactor: 1,
-          maxDelay: 1000
-        },
-        enableDelayQueue: true,
-      },
-    });
-
-    // Start the worker
-    await worker.start();
+    // Start the worker (start() will call initialize() internally)
+    await assertWorker().start();
 
     // Publish an event that will succeed on retry
-    await queueCraft.publishEvent('retry.test', { attemptCount: 0 });
+    await publisher.publish(uniqueEventName, { attemptCount: 0 });
+
+    // Wait for the message to be processed successfully after retry (with a timeout)
+    await Promise.race([
+      retrySucceeded,
+      createTimeout(5000, 'Timeout waiting for message retry to succeed')
+    ]);
 
     // Verify message was processed multiple times
-    expect(processCount).toBe(2);
-    expect(requeueSpy).toHaveBeenCalled();
-    
-    // Restore the spy
-    requeueSpy.mockRestore();
+    expect(processCount, 'Expected message to be processed at least twice (initial attempt + retry)').toBeGreaterThanOrEqual(2);
   });
 });

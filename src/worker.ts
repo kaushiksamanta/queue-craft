@@ -78,7 +78,7 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
    * Initializes the worker
    * @returns Promise that resolves when the worker is initialized
    */
-  async initialize(): Promise<void> {
+  private async initialize(): Promise<void> {
     await this.connectionManager.connect();
 
     // Set prefetch if provided
