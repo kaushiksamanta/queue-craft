@@ -372,18 +372,6 @@ worker.start()
     // Logs: "Worker started consuming from queue: queue.user.created.order.placed"
     console.log('Worker is now running');
   });
-
-// Processing logs
-// When a message is processed successfully:
-// "Successfully processed event: user.created"
-
-// When a message is retried:
-// "Retrying message with routing key user.created (attempt 2)"
-
-// When a message is sent to dead letter queue:
-// "Sending message to dead letter queue: user.created"
-
-// You can integrate these logs with your monitoring system
 ```
 
 For advanced monitoring, you can implement your own logging or metrics collection in your handlers.
