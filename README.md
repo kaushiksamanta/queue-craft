@@ -132,7 +132,6 @@ const worker = queueCraft.createWorker<MyEventPayloadMap>({
   },
   options: {
     prefetch: 10,
-    // Auto-acknowledgment is always enabled by default
     queue: {
       durable: true,
     },
@@ -302,7 +301,6 @@ const worker = queueCraft.createWorker<MyEventPayloadMap>({
 ```
 
 ## Advanced Usage
-{{ ... }}
 
 ### Retry Mechanism
 

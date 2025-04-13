@@ -122,8 +122,7 @@ describe('Worker', () => {
     workerConfig = {
       handlers: specificHandlers,
       options: {
-        prefetch: 10,
-        // autoAck is now always true by default
+        prefetch: 10
       },
     };
 

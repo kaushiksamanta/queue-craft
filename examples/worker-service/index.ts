@@ -204,7 +204,6 @@ async function runWorkerDemo() {
       },
       options: {
         prefetch: 3,
-        // Auto-acknowledgment is always enabled by default
         // Retry mechanism works automatically
         queue: {
           durable: true,

@@ -182,8 +182,6 @@ describe('Integration: Publisher and Worker', () => {
         },
       },
       options: {
-        // Auto-acknowledgment is always enabled by default
-        // Error handling now uses automatic retry mechanism
         queue: {
           durable: false,
           autoDelete: true,
@@ -254,7 +252,6 @@ describe('Integration: Publisher and Worker', () => {
         },
       },
       options: {
-        // Auto-acknowledgment is always enabled by default
         queue: {
           durable: false,
           autoDelete: true,
