@@ -1,6 +1,6 @@
 # QueueCraft
 
-QueueCraft is a TypeScript-based Node.js framework that simplifies event-driven communication using RabbitMQ (AMQP protocol). It abstracts away the complexities of managing RabbitMQ queues, exchanges, publishing, and consuming messages.
+QueueCraft is a TypeScript-based Node.js framework that simplifies event-driven communication using RabbitMQ (AMQP protocol). It abstracts away the complexities of managing RabbitMQ queues, exchanges, publishing, and consuming messages with built-in reliability features.
 
 ## Features
 
@@ -13,9 +13,9 @@ QueueCraft is a TypeScript-based Node.js framework that simplifies event-driven 
 - **Flexible Handler Patterns**: Support for multiple handler patterns with automatic event subscription
 - **Minimal Boilerplate**: Event subscriptions are automatically derived from handler definitions
 - **Robust Error Handling**: Graceful handling of connection errors and message processing failures
-- **Retry Mechanism**: Configurable retry logic with exponential backoff
-- **Dead Letter Queues**: Automatic routing of unhandled messages to dead letter queues
-- **Simplified Error Handling**: Automatic retry mechanism with exponential backoff
+- **Automatic Retries**: Built-in retry mechanism with configurable exponential backoff for failed messages
+- **Dead Letter Queues**: Automatic routing of failed messages to dead letter queues after exhausting retries
+- **Delay Queues**: Support for scheduled message retries with configurable delays
 
 ## Installation
 
@@ -60,9 +60,20 @@ const queueCraft = new QueueCraft<MyEventPayloadMap>({
   },
 });
 
+// Create a publisher for the default 'events' exchange
+// You can also specify a custom exchange name and options
+const publisher = queueCraft.createPublisher('events', {
+  exchange: {
+    type: 'topic',
+    durable: true,
+  }
+});
+
 // Publish an event
 async function publishUserCreated() {
-  await queueCraft.publishEvent('user.created', {
+  
+  // Publish an event
+  await publisher.publish('user.created', {
     id: '123',
     name: 'John Doe',
     email: 'john@example.com',
@@ -72,7 +83,10 @@ async function publishUserCreated() {
 
 publishUserCreated()
   .catch(console.error)
-  .finally(() => queueCraft.close());
+  .finally(async () => {
+    // Close the QueueCraft instance when done
+    await queueCraft.close();
+  });
 ```
 
 ### Create a Worker
@@ -131,17 +145,17 @@ const worker = queueCraft.createWorker<MyEventPayloadMap>({
     }
   },
   options: {
-    prefetch: 10,
+    prefetch: 10,            // Prefetch 10 messages at a time
     queue: {
-      durable: true,
+      durable: true,         // Create durable queues
     },
     retry: {
-      maxRetries: 3,
-      initialDelay: 100,
-      backoffFactor: 2,
-      maxDelay: 5000
+      maxRetries: 3,         // Maximum number of retry attempts
+      initialDelay: 100,     // Initial delay in milliseconds
+      backoffFactor: 2,      // Exponential backoff multiplier
+      maxDelay: 5000         // Maximum delay between retries
     },
-    enableDelayQueue: true,
+    enableDelayQueue: true,  // Enable delay queue for scheduled retries
   },
 });
 
@@ -216,10 +230,6 @@ const publisher = queueCraft.createPublisher('events', {
 
 #### Methods
 
-- **initialize(): Promise<void>**
-  
-  Initializes the publisher.
-
 - **publish<E extends keyof T>(event: E, payload: T[E], options?: object): Promise<boolean>**
   
   Publishes an event with the specified payload.
@@ -238,7 +248,6 @@ const worker = queueCraft.createWorker<MyEventPayloadMap>({
     'event.name': async (payload, metadata) => {
       // Process the event with type-safe payload
       // All handlers consistently return Promise<void> (async-first design)
-{{ ... }}
     }
   }
 });
@@ -309,28 +318,23 @@ QueueCraft provides a configurable retry mechanism with exponential backoff for 
 ```typescript
 const worker = queueCraft.createWorker<MyEventPayloadMap>({
   handlers: {
-    'user.created': async (payload, metadata) => {
-      // This handler will be retried up to 3 times if it fails
-      await processUser(payload);
-    }
+    // Your handlers here
   },
   options: {
     retry: {
-      maxRetries: 3,           // Maximum number of retry attempts
-      initialDelay: 100,       // Initial delay in milliseconds
-      backoffFactor: 2,        // Exponential backoff multiplier
-      maxDelay: 5000           // Maximum delay between retries in milliseconds
+      maxRetries: 3,          // Maximum number of retry attempts
+      initialDelay: 1000,     // Initial delay in milliseconds
+      backoffFactor: 2,       // Multiplier for each subsequent retry
+      maxDelay: 10000         // Maximum delay between retries
     },
     enableDelayQueue: true,    // Enable delay queue for retry mechanism
   }
 });
 ```
 
-
-
 ### Automatic Error Handling
 
-QueueCraft now handles errors automatically with a built-in retry mechanism. When an error occurs in a handler, the message is automatically retried with exponential backoff:
+QueueCraft handles errors automatically with a built-in retry mechanism. When an error occurs in a handler, the message is retried with configurable exponential backoff:
 
 ```typescript
 const worker = queueCraft.createWorker<MyEventPayloadMap>({
@@ -340,22 +344,20 @@ const worker = queueCraft.createWorker<MyEventPayloadMap>({
         // Your processing logic here
         await processUser(payload);
       } catch (error) {
-        // You can handle specific errors in your handler
-        console.error(`Error processing user: ${error.message}`);
-        
-        // Or let the error propagate to trigger the automatic retry mechanism
-        throw error;
+        // This error will trigger the retry mechanism
+        console.error('Error processing user:', error);
+        throw error; // Re-throw to trigger retry
       }
     }
   },
   options: {
     retry: {
-      maxRetries: 3,           // Maximum retry attempts
-      initialDelay: 1000,      // Initial delay in ms
-      backoffFactor: 2,        // Exponential backoff factor
-      maxDelay: 10000          // Maximum delay between retries
+      maxRetries: 3,          // Maximum number of retry attempts
+      initialDelay: 1000,     // Initial delay between retries (ms)
+      backoffFactor: 2,       // Multiplier for each subsequent retry
+      maxDelay: 10000         // Maximum delay between retries (ms)
     },
-    enableDelayQueue: true     // Enable delay queue for backoff
+    enableDelayQueue: true    // Enable delay queue for scheduled retries
   }
 });
 ```
@@ -488,40 +490,61 @@ interface MessageMetadata {
   };
   nack: () => void;       // Negative acknowledge without requeuing
   requeue: () => void;    // Requeue the message
-  deadLetter?: () => Promise<void>; // Send to dead letter queue
+  deadLetter: () => Promise<void>; // Send to dead letter queue
 }
 ```
 
-**Note**: Messages are automatically acknowledged upon successful handler execution. The `ack()` method has been removed as part of our async-first design pattern to simplify the API and make message handling more predictable.
+**Note**: Messages are automatically acknowledged upon successful handler execution, but you can use `metadata.nack()`, `metadata.requeue()`, or `metadata.deadLetter()` for manual control. Once a manual method is called, automatic acknowledgment will not occur, so there's no need to return early.
 
-### Custom Message Handling
+### Message Control
 
-You can access message metadata and manually acknowledge messages:
+While messages are automatically acknowledged on successful completion, QueueCraft also provides methods for manual message control:
 
 ```typescript
 const worker = queueCraft.createWorker<MyEventPayloadMap>({
   handlers: {
     'event.name': async (payload, metadata) => {
       try {
-        // Process the event with type-safe payload
-        await processEvent(payload);
+        // Process the event
+        const result = await processEvent(payload);
         
-        // Acknowledgement is handled automatically
+        // Example: Conditional acknowledgment
+        if (result.status === 'invalid_data') {
+          console.log('Invalid data, rejecting without requeue');
+          metadata.nack(); // Negative acknowledgment without requeuing
+          // No need to return early - automatic acknowledgment won't happen
+        }
+        
+        if (result.status === 'temporary_failure') {
+          console.log('Temporary failure, requeuing message');
+          metadata.requeue(); // Requeue the message for later processing
+          // You can continue execution if needed
+        }
+        
+        if (result.status === 'permanent_failure') {
+          console.log('Permanent failure, sending to dead letter queue');
+          await metadata.deadLetter(); // Send to dead letter queue
+          // Other cleanup operations can happen here
+        }
+        
+        // If we get here, processing was successful
+        // The message will be automatically acknowledged
       } catch (error) {
-        // Negative acknowledge the message on failure (rejects without requeuing)
-        metadata.nack();
-        
-        // If you want to put the message back in the queue instead, use:
-        // metadata.requeue();
-        
-        // All handlers consistently return Promise<void>
-        // Error handling doesn't break this pattern
+        // Throwing errors is an alternative way to trigger the retry mechanism
+        console.error('Unexpected error:', error);
+        throw error; 
       }
     }
   },
   options: {
-    autoAck: false, // Disable auto-acknowledgement
-  },
+    retry: {
+      maxRetries: 3,          // Maximum number of retry attempts
+      initialDelay: 1000,     // Initial delay between retries (ms)
+      backoffFactor: 2,       // Multiplier for each subsequent retry
+      maxDelay: 10000         // Maximum delay between retries (ms)
+    },
+    enableDelayQueue: true    // Use delay queue for scheduled retries
+  }
 });
 ```
 

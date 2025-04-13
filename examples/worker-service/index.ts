@@ -1,6 +1,15 @@
+// Worker-service example for QueueCraft
+
 import { QueueCraft } from '../../src';
 import { ExampleEventPayloadMap } from '../shared-types';
 import { MessageMetadata } from '../../src/types';
+
+// Helper function to record invalid phone numbers
+async function recordInvalidPhoneNumber(phoneNumber: string): Promise<void> {
+  console.log(`Recording invalid phone number: ${phoneNumber} for further analysis`);
+  // In a real application, this might write to a database or logging service
+  return Promise.resolve();
+}
 
 // Create a QueueCraft instance with our event payload map
 const queueCraft = new QueueCraft<ExampleEventPayloadMap>({
@@ -145,10 +154,17 @@ async function runWorkerDemo() {
           // Validate input data
           if (!payload.recipient.includes('@')) {
             console.error(`Invalid email address: ${payload.recipient}`);  
-            // Business validation failure - send to dead letter queue
-            console.log(`Sending to dead letter queue due to invalid email format`);
-            await metadata.deadLetter?.();
-            return;
+            // Business validation failure - send to dead letter queue immediately
+            console.log(`Invalid email format - sending directly to dead letter queue`);
+            if (metadata.deadLetter) {
+              await metadata.deadLetter();
+              console.log('Message sent to dead letter queue');
+              // No need to return early anymore - can continue execution
+              console.log('We can perform additional operations here if needed...');
+            } else {
+              console.log('Dead letter function not available, throwing error instead');
+              throw new Error('Invalid email format');
+            }
           }
           
           // Demonstrate retry-able vs. non-retry-able errors
@@ -189,6 +205,25 @@ async function runWorkerDemo() {
           // Get retry count from headers
           const retryCount = metadata.properties.headers?.['x-retry-count'] || 0;
           console.log(`Processing attempt #${retryCount + 1}`);
+          
+          // Example: Use requeue for temporary service unavailability
+          if (payload.phoneNumber.includes('service-down')) {
+            console.log('External SMS service appears to be down, requeuing message for later');
+            // With the improved implementation, we can call requeue() and continue execution
+            metadata.requeue();
+            // Continue execution - can do additional logging or cleanup
+            console.log('Requeue operation completed, message will be processed later');
+            console.log('No need to return early with the improved implementation!');
+          }
+          
+          // Example: Use nack for invalid phone numbers (won't be retried)
+          if (payload.phoneNumber.length < 10) {
+            console.log('Invalid phone number, sending negative acknowledgment without requeue');
+            metadata.nack();
+            // No need to return early, can continue with additional operations
+            console.log('Invalid message rejected, performing cleanup operations...');
+            await recordInvalidPhoneNumber(payload.phoneNumber);
+          }
           
           // Simulate backoff behavior
           if (retryCount > 0) {

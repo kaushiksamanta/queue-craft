@@ -19,10 +19,6 @@ async function runPublisherDemo() {
   console.log('Publisher service starting...');
 
   try {
-    // Initialize the publisher
-    await publisher.initialize();
-    console.log('Publisher initialized successfully');
-
     // Publish a user.created event
     const userId = uuidv4();
     console.log(`Publishing user.created event for user ${userId}`);

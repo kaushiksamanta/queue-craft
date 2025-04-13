@@ -9,6 +9,8 @@ import { Channel, ConsumeMessage } from 'amqplib';
 export interface UserCreatedPayload {
   id: string;
   name: string;
+  email: string;
+  createdAt: string;
 }
 
 // Define order placed payload interface

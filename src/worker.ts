@@ -143,6 +143,9 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
             return;
           }
 
+          // Create a flag to track if manual acknowledgment was used
+          let manualAckUsed = false;
+          
           // Create metadata object with enhanced functionality
           const metadata: MessageMetadata = {
             properties: {
@@ -157,17 +160,28 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
               routingKey: msg.fields.routingKey,
               exchange: msg.fields.exchange,
             },
-            nack: () => channel.nack(msg, false, false), // Always reject without requeuing
-            requeue: () => channel.nack(msg, false, true), // Requeue puts the message back in the queue
-            deadLetter: () => this.sendToDeadLetterQueue(msg, payload, event as string),
+            nack: () => {
+              manualAckUsed = true;
+              channel.nack(msg, false, false); // Always reject without requeuing
+            },
+            requeue: () => {
+              manualAckUsed = true;
+              channel.nack(msg, false, true); // Requeue puts the message back in the queue
+            },
+            deadLetter: async () => {
+              manualAckUsed = true;
+              await this.sendToDeadLetterQueue(msg, payload, event as string);
+            },
           };
 
           try {
             // Process with retry logic if enabled
             await this.processMessageWithRetry(event, payload, metadata, msg);
 
-            // Always acknowledge successful processing
-            channel.ack(msg);
+            // Only acknowledge if manual acknowledgment wasn't used
+            if (!manualAckUsed) {
+              channel.ack(msg);
+            }
           } catch (error: any) {
             const errorObj =
               error instanceof Error ? error : new Error(error?.message || 'Unknown error');

@@ -134,7 +134,7 @@ describe('Worker', () => {
   });
 
   it('should initialize worker', async () => {
-    await worker.initialize();
+    await worker.start();
 
     expect(connectionManager.connect).toHaveBeenCalled();
     expect(connectionManager.setPrefetch).toHaveBeenCalledWith(10);
@@ -218,6 +218,134 @@ describe('Worker', () => {
     // Check if the event-specific handler was called
     expect(specificHandlers['user.created']).toHaveBeenCalled();
     expect(channel.ack).toHaveBeenCalledWith(message);
+  });
+
+  it('should not auto-acknowledge when manual nack is used', async () => {
+    // Create a handler that uses manual acknowledgment
+    specificHandlers['user.created'] = vi.fn().mockImplementation(async (_payload, metadata) => {
+      // Call manual nack
+      metadata.nack();
+      // Add some code after the nack call to verify execution continues
+      await Promise.resolve();
+    });
+
+    await worker.start();
+
+    const channel = await connectionManager.getChannel();
+    const consumeFn = channel.consume as unknown as { mock: { calls: Array<[string, (msg: TestMessage) => Promise<void>, { noAck: boolean }]> } };
+    const consumeCallback = consumeFn.mock.calls[0][1];
+
+    // Mock the channel methods to verify they're called
+    const ackSpy = vi.fn();
+    const nackSpy = vi.fn();
+    channel.ack = ackSpy;
+    channel.nack = nackSpy;
+
+    const message: TestMessage = {
+      content: Buffer.from(JSON.stringify({ id: '123', name: 'John' })),
+      fields: { routingKey: 'user.created' },
+      properties: {
+        headers: {},
+      },
+    };
+
+    // Execute the consume callback
+    await consumeCallback(message);
+
+    // Verify that the handler was called
+    expect(specificHandlers['user.created']).toHaveBeenCalled();
+    
+    // Verify that nack was called (manual acknowledgment)
+    expect(nackSpy).toHaveBeenCalledWith(message, false, false);
+    
+    // Most importantly, verify that ack was NOT called (no automatic acknowledgment)
+    expect(ackSpy).not.toHaveBeenCalled();
+  });
+
+  it('should not auto-acknowledge when manual requeue is used', async () => {
+    // Create a handler that uses manual requeue
+    specificHandlers['user.created'] = vi.fn().mockImplementation(async (_payload, metadata) => {
+      // Call manual requeue
+      metadata.requeue();
+      // Add some code after the requeue call to verify execution continues
+      await Promise.resolve();
+    });
+
+    await worker.start();
+
+    const channel = await connectionManager.getChannel();
+    const consumeFn = channel.consume as unknown as { mock: { calls: Array<[string, (msg: TestMessage) => Promise<void>, { noAck: boolean }]> } };
+    const consumeCallback = consumeFn.mock.calls[0][1];
+
+    // Mock the channel methods to verify they're called
+    const ackSpy = vi.fn();
+    const nackSpy = vi.fn();
+    channel.ack = ackSpy;
+    channel.nack = nackSpy;
+
+    const message: TestMessage = {
+      content: Buffer.from(JSON.stringify({ id: '123', name: 'John' })),
+      fields: { routingKey: 'user.created' },
+      properties: {
+        headers: {},
+      },
+    };
+
+    // Execute the consume callback
+    await consumeCallback(message);
+
+    // Verify that the handler was called
+    expect(specificHandlers['user.created']).toHaveBeenCalled();
+    
+    // Verify that nack was called with requeue=true (manual requeue)
+    expect(nackSpy).toHaveBeenCalledWith(message, false, true);
+    
+    // Most importantly, verify that ack was NOT called (no automatic acknowledgment)
+    expect(ackSpy).not.toHaveBeenCalled();
+  });
+
+  it('should not auto-acknowledge when manual deadLetter is used', async () => {
+    // Create a handler that uses manual deadLetter
+    specificHandlers['user.created'] = vi.fn().mockImplementation(async (_payload, metadata) => {
+      // Call manual deadLetter
+      await metadata.deadLetter?.();
+      // Add some code after the deadLetter call to verify execution continues
+      await Promise.resolve();
+    });
+
+    await worker.start();
+
+    const channel = await connectionManager.getChannel();
+    const consumeFn = channel.consume as unknown as { mock: { calls: Array<[string, (msg: TestMessage) => Promise<void>, { noAck: boolean }]> } };
+    const consumeCallback = consumeFn.mock.calls[0][1];
+
+    // Mock the channel methods to verify they're called
+    const ackSpy = vi.fn();
+    const dlqSpy = vi.spyOn(worker as unknown as WorkerPrivateMethods, 'sendToDeadLetterQueue').mockResolvedValue();
+    channel.ack = ackSpy;
+
+    const message: TestMessage = {
+      content: Buffer.from(JSON.stringify({ id: '123', name: 'John' })),
+      fields: { routingKey: 'user.created' },
+      properties: {
+        headers: {},
+      },
+    };
+
+    // Execute the consume callback
+    await consumeCallback(message);
+
+    // Verify that the handler was called
+    expect(specificHandlers['user.created']).toHaveBeenCalled();
+    
+    // Verify that sendToDeadLetterQueue was called (manual deadLetter)
+    expect(dlqSpy).toHaveBeenCalled();
+    
+    // Most importantly, verify that ack was NOT called (no automatic acknowledgment)
+    expect(ackSpy).not.toHaveBeenCalled();
+    
+    // Clean up
+    dlqSpy.mockRestore();
   });
 
   it('should handle error in message processing', async () => {
