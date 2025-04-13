@@ -1,0 +1,47 @@
+{
+  "name": "queuecraft",
+  "version": "0.1.0",
+  "description": "TypeScript-based Node.js framework for RabbitMQ event-driven communication",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:with-rabbitmq": "./scripts/run-tests.sh",
+    "lint": "eslint \"{src,examples,tests}/**/*.ts\"",
+    "lint:fix": "eslint \"{src,examples,tests}/**/*.ts\" --fix",
+    "format": "prettier --write \"{src,examples,tests}/**/*.ts\"",
+    "prepare": "npm run build",
+    "example:publisher": "ts-node examples/publisher-service/index.ts",
+    "example:worker": "ts-node examples/worker-service/index.ts"
+  },
+  "keywords": [
+    "rabbitmq",
+    "amqp",
+    "event-driven",
+    "typescript",
+    "nodejs"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "amqplib": "^0.8.0",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "@types/amqplib": "^0.8.2",
+    "@types/node": "^18.16.0",
+    "@typescript-eslint/eslint-plugin": "^5.62.0",
+    "@typescript-eslint/parser": "^5.62.0",
+    "eslint": "^8.57.1",
+    "eslint-config-prettier": "^10.1.2",
+    "prettier": "^2.8.8",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.0.4",
+    "vitest": "^0.30.1"
+  }
+}

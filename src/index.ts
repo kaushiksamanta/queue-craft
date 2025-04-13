@@ -1,0 +1,184 @@
+/**
+ * QueueCraft - A TypeScript-based Node.js framework for RabbitMQ event-driven communication
+ */
+
+// Export types
+export * from './types';
+
+// Export connection manager
+export { ConnectionManager } from './connection';
+
+// Export publisher
+export { Publisher, createPublisher } from './publisher';
+
+// Export worker
+export { Worker, createWorker } from './worker';
+
+// Main QueueCraft class
+import { ConnectionManager } from './connection';
+import { Publisher, createPublisher } from './publisher';
+import { Worker, createWorker } from './worker';
+import { EventPayloadMap, PublisherOptions, QueueCraftConfig, WorkerConfig } from './types';
+
+/**
+ * QueueCraft - Main class for managing RabbitMQ connections, publishers, and workers
+ */
+export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
+  private readonly connectionManager: ConnectionManager;
+  private readonly publishers: Map<string, Publisher<T>> = new Map();
+  private readonly workers: Map<string, Worker<any>> = new Map();
+
+  /**
+   * Creates a new QueueCraft instance
+   * @param config QueueCraft configuration
+   */
+  constructor(config: QueueCraftConfig) {
+    this.connectionManager = new ConnectionManager(config.connection, config.defaultExchange);
+  }
+
+  /**
+   * Creates a new publisher
+   * @param exchangeName Exchange name
+   * @param options Publisher options
+   * @returns Publisher instance
+   */
+  createPublisher(exchangeName = 'events', options: PublisherOptions = {}): Publisher<T> {
+    const key = `publisher:${exchangeName}`;
+
+    if (!this.publishers.has(key)) {
+      const publisher = createPublisher<T>(this.connectionManager, exchangeName, options);
+
+      this.publishers.set(key, publisher);
+    }
+
+    const publisher = this.publishers.get(key);
+    if (!publisher) {
+      throw new Error(`Publisher not found for exchange: ${exchangeName}`);
+    }
+    return publisher;
+  }
+
+  /**
+   * Creates a new worker
+   * @param config Worker configuration
+   * @param exchangeName Exchange name
+   * @returns Worker instance
+   */
+  createWorker<E extends Record<string, any> = T>(
+    config: WorkerConfig<E>,
+    exchangeName = 'events',
+  ): Worker<E> {
+    // Determine events to use for the key based on handlers
+    let events: string[] = [];
+
+    if (config.handlers) {
+      if (typeof config.handlers === 'object') {
+        // Handlers is a direct event handler map
+        events = Object.keys(config.handlers);
+      }
+    }
+
+    const key = `worker:${exchangeName}:${events.join('.')}`;
+
+    if (!this.workers.has(key)) {
+      const worker = createWorker<E>(this.connectionManager, config, exchangeName);
+
+      this.workers.set(key, worker);
+    }
+
+    const worker = this.workers.get(key);
+    if (!worker) {
+      throw new Error(`Worker not found for events: ${events.join(', ')}`);
+    }
+    return worker as Worker<E>;
+  }
+
+  /**
+   * Publishes an event
+   * @param event Event name
+   * @param payload Event payload
+   * @param options Publish options
+   * @param exchangeName Exchange name
+   * @returns Promise that resolves when the event is published
+   */
+  async publishEvent<E extends keyof T>(
+    event: E,
+    payload: T[E],
+    options: {
+      headers?: Record<string, any>;
+      messageId?: string;
+      timestamp?: number;
+      contentType?: string;
+      contentEncoding?: string;
+      persistent?: boolean;
+    } = {},
+    exchangeName = 'events',
+  ): Promise<boolean> {
+    const publisher = this.createPublisher(exchangeName);
+    return publisher.publish(event, payload, options);
+  }
+
+  /**
+   * Closes all connections, publishers, and workers
+   * @returns Promise that resolves when all connections are closed
+   */
+  async close(): Promise<void> {
+    const closePromises: Promise<void>[] = [];
+
+    // Close all workers
+    for (const worker of this.workers.values()) {
+      closePromises.push(worker.stop());
+    }
+
+    // Wait for all workers to stop
+    await Promise.all(closePromises);
+
+    // Close connection manager
+    await this.connectionManager.close();
+
+    // Clear maps
+    this.publishers.clear();
+    this.workers.clear();
+  }
+}
+
+/**
+ * Creates a new QueueCraft instance from environment variables
+ * @returns QueueCraft instance
+ */
+export function createFromEnv<T extends EventPayloadMap = EventPayloadMap>(): QueueCraft<T> {
+  // Load environment variables
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    require('dotenv').config();
+  } catch (error) {
+    // Ignore if dotenv is not available
+  }
+
+  const config: QueueCraftConfig = {
+    connection: {
+      host: process.env.RABBITMQ_HOST || 'localhost',
+      port: parseInt(process.env.RABBITMQ_PORT || '5672', 10),
+      username: process.env.RABBITMQ_USERNAME || 'guest',
+      password: process.env.RABBITMQ_PASSWORD || 'guest',
+      vhost: process.env.RABBITMQ_VHOST,
+      timeout: process.env.RABBITMQ_TIMEOUT
+        ? parseInt(process.env.RABBITMQ_TIMEOUT, 10)
+        : undefined,
+      heartbeat: process.env.RABBITMQ_HEARTBEAT
+        ? parseInt(process.env.RABBITMQ_HEARTBEAT, 10)
+        : undefined,
+    },
+    defaultExchange: {
+      type: (process.env.RABBITMQ_EXCHANGE_TYPE || 'topic') as
+        | 'direct'
+        | 'topic'
+        | 'fanout'
+        | 'headers',
+      durable: process.env.RABBITMQ_EXCHANGE_DURABLE !== 'false',
+      autoDelete: process.env.RABBITMQ_EXCHANGE_AUTODELETE === 'true',
+    },
+  };
+
+  return new QueueCraft<T>(config);
+}
