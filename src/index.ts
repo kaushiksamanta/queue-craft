@@ -24,16 +24,18 @@ import { EventPayloadMap, PublisherOptions, QueueCraftConfig, WorkerConfig } fro
  * QueueCraft - Main class for managing RabbitMQ connections, publishers, and workers
  */
 export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
-  private readonly connectionManager: ConnectionManager;
+  private static connectionManager: ConnectionManager;
   private readonly publishers: Map<string, Publisher<T>> = new Map();
-  private readonly workers: Map<string, Worker<any>> = new Map();
+  private readonly workers: Map<string, Worker<T>> = new Map();
 
   /**
    * Creates a new QueueCraft instance
    * @param config QueueCraft configuration
    */
   constructor(config: QueueCraftConfig) {
-    this.connectionManager = new ConnectionManager(config.connection, config.defaultExchange);
+    if (!QueueCraft.connectionManager) {
+      QueueCraft.connectionManager = new ConnectionManager(config.connection, config.defaultExchange);
+    }
   }
 
   /**
@@ -46,7 +48,7 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
     const key = `publisher:${exchangeName}`;
 
     if (!this.publishers.has(key)) {
-      const publisher = createPublisher<T>(this.connectionManager, exchangeName, options);
+      const publisher = createPublisher<T>(QueueCraft.connectionManager, exchangeName, options);
 
       this.publishers.set(key, publisher);
     }
@@ -64,10 +66,10 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
    * @param exchangeName Exchange name
    * @returns Worker instance
    */
-  createWorker<E extends Record<string, any> = T>(
-    config: WorkerConfig<E>,
+  createWorker(
+    config: WorkerConfig<T>,
     exchangeName = 'events',
-  ): Worker<E> {
+  ): Worker<T> {
     // Determine events to use for the key based on handlers
     let events: string[] = [];
 
@@ -81,8 +83,7 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
     const key = `worker:${exchangeName}:${events.join('.')}`;
 
     if (!this.workers.has(key)) {
-      const worker = createWorker<E>(this.connectionManager, config, exchangeName);
-
+      const worker = createWorker<T>(QueueCraft.connectionManager, config, exchangeName);
       this.workers.set(key, worker);
     }
 
@@ -90,7 +91,7 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
     if (!worker) {
       throw new Error(`Worker not found for events: ${events.join(', ')}`);
     }
-    return worker as Worker<E>;
+    return worker;
   }
 
   /**
@@ -134,7 +135,7 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
     await Promise.all(closePromises);
 
     // Close connection manager
-    await this.connectionManager.close();
+    await QueueCraft.connectionManager.close();
 
     // Clear maps
     this.publishers.clear();
@@ -158,7 +159,7 @@ export function createFromEnv<T extends EventPayloadMap = EventPayloadMap>(): Qu
   const config: QueueCraftConfig = {
     connection: {
       host: process.env.RABBITMQ_HOST || 'localhost',
-      port: parseInt(process.env.RABBITMQ_PORT || '5672', 10),
+      port: parseInt(process.env.RABBITMQ_PORT || '5672'),
       username: process.env.RABBITMQ_USERNAME || 'guest',
       password: process.env.RABBITMQ_PASSWORD || 'guest',
       vhost: process.env.RABBITMQ_VHOST,

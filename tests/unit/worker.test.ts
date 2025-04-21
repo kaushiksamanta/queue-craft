@@ -362,8 +362,7 @@ describe('Worker', () => {
         backoffFactor: 1.5,
         maxDelay: 100,
       },
-      // Disable delay queue for simpler testing
-      enableDelayQueue: false,
+      // Delay queue for scheduled retries is always enabled
     };
     worker = new Worker(connectionManager, workerConfig, 'test-exchange');
 

@@ -23,6 +23,9 @@ describe('Integration: Publisher and Worker', () => {
   };
 
   // Create a real QueueCraft instance for integration testing
+  // Each QueueCraft instance is type-safe for a single payload map.
+  // To use a different event map, create a new QueueCraft instance.
+  // All instances share the same RabbitMQ connection by default.
   const queueCraft = new QueueCraft<TestEventPayloadMap>({
     connection: {
       host: process.env.RABBITMQ_HOST || 'localhost',
@@ -307,7 +310,6 @@ describe('Integration: Publisher and Worker', () => {
             backoffFactor: 1,
             maxDelay: 1000
           },
-          enableDelayQueue: true,
         },
       }, exchangeName);
     });
@@ -341,7 +343,7 @@ describe('Integration: Publisher and Worker', () => {
     // Create a Promise that will resolve when the message is processed
     const manualAckHandled = new Promise<void>((resolve) => {
       // Create a worker with handlers that use manual acknowledgment
-      worker = queueCraft.createWorker<Record<string, any>>({
+      worker = queueCraft.createWorker({
         handlers: {
           // Use the unique event name - this will determine the queue name
           [uniqueEventName]: async (payload: any, metadata: MessageMetadata) => {

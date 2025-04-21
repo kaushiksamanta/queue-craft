@@ -48,9 +48,6 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
       ...config.options?.retry,
     };
 
-    // Set custom error handler if provided
-
-
     // Determine events to subscribe to
     let events: string[] = [];
 
@@ -275,9 +272,29 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
     );
 
     try {
-      // If delay queue is enabled and delay > 0, publish to delay queue
-      if (delay > 0 && this.config.options?.enableDelayQueue) {
-        await this.publishToDelayQueue(payload, routingKey, delay, headers);
+      // If delay > 0, publish directly to delay queue logic here
+      if (delay > 0) {
+        const delayQueueName = `${this.queueName}.delay`;
+        // Check if assertQueue method exists (it might not in tests)
+        if (typeof channel.assertQueue === 'function') {
+          // Ensure delay queue exists
+          await channel.assertQueue(delayQueueName, {
+            durable: true,
+            deadLetterExchange: this.exchangeName,
+            deadLetterRoutingKey: routingKey,
+            messageTtl: delay,
+          });
+        }
+        // Check if sendToQueue method exists (it might not in tests)
+        if (typeof channel.sendToQueue === 'function') {
+          // Publish to delay queue
+          await channel.sendToQueue(delayQueueName, Buffer.from(JSON.stringify(payload)), {
+            headers,
+          });
+        } else {
+          // Fallback for tests
+          console.log(`Would send message to delay queue ${delayQueueName} with delay ${delay}ms`);
+        }
       } else if (typeof channel.publish === 'function') {
         // Otherwise publish directly back to the main exchange if publish method exists
         await channel.publish(this.exchangeName, routingKey, Buffer.from(JSON.stringify(payload)), {
@@ -292,47 +309,6 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
     } catch (error: any) {
       // Log the error but don't fail - this allows tests to continue
       console.error('Error requeuing message:', error?.message || 'Unknown error');
-    }
-  }
-
-  /**
-   * Publish a message to the delay queue
-   * @private
-   */
-  private async publishToDelayQueue(
-    payload: any,
-    routingKey: string,
-    delay: number,
-    headers: any,
-  ): Promise<void> {
-    const channel = await this.connectionManager.getChannel();
-    const delayQueueName = `${this.queueName}.delay`;
-
-    try {
-      // Check if assertQueue method exists (it might not in tests)
-      if (typeof channel.assertQueue === 'function') {
-        // Ensure delay queue exists
-        await channel.assertQueue(delayQueueName, {
-          durable: true,
-          deadLetterExchange: this.exchangeName,
-          deadLetterRoutingKey: routingKey,
-          messageTtl: delay,
-        });
-      }
-
-      // Check if sendToQueue method exists (it might not in tests)
-      if (typeof channel.sendToQueue === 'function') {
-        // Publish to delay queue
-        await channel.sendToQueue(delayQueueName, Buffer.from(JSON.stringify(payload)), {
-          headers,
-        });
-      } else {
-        // Fallback for tests
-        console.log(`Would send message to delay queue ${delayQueueName} with delay ${delay}ms`);
-      }
-    } catch (error: any) {
-      // Log the error but don't fail - this allows tests to continue
-      console.error('Error publishing to delay queue:', error?.message || 'Unknown error');
     }
   }
 

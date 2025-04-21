@@ -1,4 +1,4 @@
-import { Connection, Channel, connect } from 'amqplib';
+import { Connection, Channel, connect, Replies } from 'amqplib';
 import { ConnectionOptions, ExchangeOptions, QueueOptions } from './types';
 
 /**
@@ -129,7 +129,7 @@ export class ConnectionManager {
   async assertExchange(
     name: string,
     options: Omit<ExchangeOptions, 'name'> = this.defaultExchangeOptions,
-  ): Promise<any> {
+  ): Promise<Replies.AssertExchange> {
     const channel = await this.getChannel();
 
     // Skip if already set up
@@ -155,7 +155,7 @@ export class ConnectionManager {
    * @param options Queue options
    * @returns Promise that resolves when the queue is asserted
    */
-  async assertQueue(name: string, options: Omit<QueueOptions, 'name'> = {}): Promise<any> {
+  async assertQueue(name: string, options: Omit<QueueOptions, 'name'> = {}): Promise<Replies.AssertQueue> {
     const channel = await this.getChannel();
 
     // Skip if already set up
@@ -183,7 +183,7 @@ export class ConnectionManager {
    * @param pattern Routing pattern
    * @returns Promise that resolves when the binding is created
    */
-  async bindQueue(queue: string, exchange: string, pattern: string): Promise<any> {
+  async bindQueue(queue: string, exchange: string, pattern: string): Promise<Replies.Empty> {
     const channel = await this.getChannel();
     return channel.bindQueue(queue, exchange, pattern);
   }

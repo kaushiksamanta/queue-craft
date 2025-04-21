@@ -2,11 +2,14 @@ import { QueueCraft } from '../../src';
 import { ExampleEventPayloadMap } from '../shared-types';
 import { v4 as uuidv4 } from 'uuid';
 
+// Each QueueCraft instance is type-safe for a single payload map.
+// To use a different event map, create a new QueueCraft instance.
+// All instances share the same RabbitMQ connection by default.
 // Create a QueueCraft instance with our event payload map
 const queueCraft = new QueueCraft<ExampleEventPayloadMap>({
   connection: {
     host: process.env.RABBITMQ_HOST || 'localhost',
-    port: parseInt(process.env.RABBITMQ_PORT || '5672', 10),
+    port: parseInt(process.env.RABBITMQ_PORT || '5672'),
     username: process.env.RABBITMQ_USERNAME || 'guest',
     password: process.env.RABBITMQ_PASSWORD || 'guest',
   },

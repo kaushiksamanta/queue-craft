@@ -90,8 +90,6 @@ export interface WorkerConfig<T extends Record<string, any> = EventPayloadMap> {
     exchange?: Omit<ExchangeOptions, 'name'>;
     /** Retry options for failed message processing */
     retry?: RetryOptions;
-    /** Whether to enable delay queue for retries with exponential backoff */
-    enableDelayQueue?: boolean;
   };
 }
 

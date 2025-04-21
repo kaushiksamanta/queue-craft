@@ -37,6 +37,10 @@ yarn add queuecraft
 // types.ts
 import { EventPayloadMap } from 'queuecraft';
 
+// NOTE: Each QueueCraft instance is type-safe for a single event payload map.
+// To use a different event map, create a new QueueCraft instance.
+// All instances share the same RabbitMQ connection by default.
+
 export interface MyEventPayloadMap extends EventPayloadMap {
   'user.created': { id: string; name: string; email: string };
   'order.placed': { id: string; userId: string; amount: number };
@@ -54,7 +58,7 @@ import { MyEventPayloadMap } from './types';
 const queueCraft = new QueueCraft<MyEventPayloadMap>({
   connection: {
     host: process.env.RABBITMQ_HOST || 'localhost',
-    port: parseInt(process.env.RABBITMQ_PORT || '5672', 10),
+    port: parseInt(process.env.RABBITMQ_PORT || '5672'),
     username: process.env.RABBITMQ_USERNAME || 'guest',
     password: process.env.RABBITMQ_PASSWORD || 'guest',
   },
@@ -100,7 +104,7 @@ import { MyEventPayloadMap } from './types';
 const queueCraft = new QueueCraft<MyEventPayloadMap>({
   connection: {
     host: process.env.RABBITMQ_HOST || 'localhost',
-    port: parseInt(process.env.RABBITMQ_PORT || '5672', 10),
+    port: parseInt(process.env.RABBITMQ_PORT || '5672'),
     username: process.env.RABBITMQ_USERNAME || 'guest',
     password: process.env.RABBITMQ_PASSWORD || 'guest',
   },
@@ -155,7 +159,7 @@ const worker = queueCraft.createWorker<MyEventPayloadMap>({
       backoffFactor: 2,      // Exponential backoff multiplier
       maxDelay: 5000         // Maximum delay between retries
     },
-    enableDelayQueue: true,  // Enable delay queue for scheduled retries
+    // Delay queue for scheduled retries is always enabled
   },
 });
 
@@ -313,7 +317,7 @@ const worker = queueCraft.createWorker<MyEventPayloadMap>({
 
 ### Retry Mechanism
 
-QueueCraft provides a configurable retry mechanism with exponential backoff for handling transient failures:
+QueueCraft provides a configurable retry mechanism with exponential backoff for handling transient failures. Delay queue logic is now handled directly in the worker (see the implementation of requeueWithRetryCount):
 
 ```typescript
 const worker = queueCraft.createWorker<MyEventPayloadMap>({
@@ -327,7 +331,7 @@ const worker = queueCraft.createWorker<MyEventPayloadMap>({
       backoffFactor: 2,       // Multiplier for each subsequent retry
       maxDelay: 10000         // Maximum delay between retries
     },
-    enableDelayQueue: true,    // Enable delay queue for retry mechanism
+    // Delay queue for scheduled retries is always enabled
   }
 });
 ```
@@ -357,7 +361,7 @@ const worker = queueCraft.createWorker<MyEventPayloadMap>({
       backoffFactor: 2,       // Multiplier for each subsequent retry
       maxDelay: 10000         // Maximum delay between retries (ms)
     },
-    enableDelayQueue: true    // Enable delay queue for scheduled retries
+    // Delay queue for retry mechanism is always enabled
   }
 });
 ```
@@ -543,7 +547,7 @@ const worker = queueCraft.createWorker<MyEventPayloadMap>({
       backoffFactor: 2,       // Multiplier for each subsequent retry
       maxDelay: 10000         // Maximum delay between retries (ms)
     },
-    enableDelayQueue: true    // Use delay queue for scheduled retries
+    // Delay queue for scheduled retries is always enabled
   }
 });
 ```

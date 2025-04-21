@@ -48,4 +48,6 @@ export interface ExampleEventPayloadMap {
     content: string;
     metadata?: Record<string, any>;
   };
+  // Allow dead letter event for DLQ worker
+  'dead-letter': any;
 }

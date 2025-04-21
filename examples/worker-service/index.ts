@@ -1,4 +1,7 @@
 // Worker-service example for QueueCraft
+// Each QueueCraft instance is type-safe for a single payload map.
+// To use a different event map, create a new QueueCraft instance.
+// All instances share the same RabbitMQ connection by default.
 
 import { QueueCraft } from '../../src';
 import { ExampleEventPayloadMap } from '../shared-types';
@@ -15,7 +18,7 @@ async function recordInvalidPhoneNumber(phoneNumber: string): Promise<void> {
 const queueCraft = new QueueCraft<ExampleEventPayloadMap>({
   connection: {
     host: process.env.RABBITMQ_HOST || 'localhost',
-    port: parseInt(process.env.RABBITMQ_PORT || '5672', 10),
+    port: parseInt(process.env.RABBITMQ_PORT || '5672'),
     username: process.env.RABBITMQ_USERNAME || 'guest',
     password: process.env.RABBITMQ_PASSWORD || 'guest',
   },
@@ -90,7 +93,7 @@ async function runWorkerDemo() {
 
   try {
     // Basic worker with simple handlers - demonstrating async-first pattern
-    const basicWorker = queueCraft.createWorker<ExampleEventPayloadMap>({
+    const basicWorker = queueCraft.createWorker({
       handlers: {
         'user.created': async (payload, metadata) => {
           console.log(`\n[BASIC WORKER] Processing user.created event`);
@@ -141,7 +144,7 @@ async function runWorkerDemo() {
     });
     
     // Error handling worker with retry mechanism and dead letter queue
-    const errorHandlingWorker = queueCraft.createWorker<ExampleEventPayloadMap>({
+    const errorHandlingWorker = queueCraft.createWorker({
       handlers: {
         // This handler demonstrates comprehensive error handling patterns
         'notification.email': async (payload, metadata) => {
@@ -239,7 +242,7 @@ async function runWorkerDemo() {
       },
       options: {
         prefetch: 3,
-        // Retry mechanism works automatically
+        // Retry mechanism works automatically via built-in delay queue logic (see Worker.requeueWithRetryCount)
         queue: {
           durable: true,
         },
@@ -253,7 +256,7 @@ async function runWorkerDemo() {
     });
     
     // Dead letter queue worker - using a generic type to allow any payload
-    const deadLetterWorker = queueCraft.createWorker<{'dead-letter': any}>({
+    const deadLetterWorker = queueCraft.createWorker({
       handlers: {
         'dead-letter': async (payload, metadata) => {
           await processDeadLetterMessage(payload, metadata);
