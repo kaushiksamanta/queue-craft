@@ -155,8 +155,6 @@ describe('Integration: Publisher and Worker', () => {
 
     // Verify message was processed
     expect(messageCount, 'Expected exactly one message to be processed').toBe(1);
-    
-
   });
 
   it('should handle multiple event types', async () => {
@@ -220,6 +218,9 @@ describe('Integration: Publisher and Worker', () => {
     // Wait a bit for the order message to be processed
     // This ensures the second message has time to be processed
     await new Promise(resolve => setTimeout(resolve, 1000));
+
+    // Verify both messages were processed
+    expect(messageCount, 'Expected two messages to be processed (user.created and order.placed)').toBe(2);
   });
 
   it('should handle errors and retry messages', async () => {
@@ -229,6 +230,7 @@ describe('Integration: Publisher and Worker', () => {
       worker = queueCraft.createWorker({
         handlers: {
           'error.test': async (payload: ErrorTestPayload, _metadata: MessageMetadata) => {
+            messageCount++;
             if (payload.shouldFail) {
               errorCount++;
               
@@ -285,6 +287,7 @@ describe('Integration: Publisher and Worker', () => {
       worker = queueCraft.createWorker({
         handlers: {
           [uniqueEventName]: async (payload: RetryTestPayload, metadata: MessageMetadata) => {
+            messageCount++;
             processCount++;
             
             // Get retry count from headers
@@ -328,6 +331,7 @@ describe('Integration: Publisher and Worker', () => {
 
     // Verify message was processed multiple times
     expect(processCount, 'Expected message to be processed at least twice (initial attempt + retry)').toBeGreaterThanOrEqual(2);
+    expect(messageCount, 'Expected messageCount to be incremented').toBeGreaterThanOrEqual(2);
   });
 
   it('should support manual acknowledgment without returning early', async () => {
@@ -347,6 +351,7 @@ describe('Integration: Publisher and Worker', () => {
         handlers: {
           // Use the unique event name - this will determine the queue name
           [uniqueEventName]: async (payload: any, metadata: MessageMetadata) => {
+            messageCount++;
             // Call different manual acknowledgment methods based on the user email
             if (payload.email === 'nack@example.com') {
               // Use nack without return
@@ -414,5 +419,6 @@ describe('Integration: Publisher and Worker', () => {
     // Verify that code continued executing after nack
     expect(nackCalled).toBe(true);
     expect(codeAfterManualAckExecuted).toBe(true);
+    expect(messageCount, 'Expected messageCount to be incremented').toBeGreaterThanOrEqual(1);
   });
 });
