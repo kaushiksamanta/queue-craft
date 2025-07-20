@@ -2,23 +2,16 @@
  * QueueCraft - A TypeScript-based Node.js framework for RabbitMQ event-driven communication
  */
 
-// Export types
 export * from './types';
-
-// Export connection manager
 export { ConnectionManager } from './connection';
-
-// Export publisher
 export { Publisher, createPublisher } from './publisher';
-
-// Export worker
 export { Worker, createWorker } from './worker';
 
-// Main QueueCraft class
 import { ConnectionManager } from './connection';
 import { Publisher, createPublisher } from './publisher';
 import { Worker, createWorker } from './worker';
-import { EventPayloadMap, PublisherOptions, QueueCraftConfig, WorkerConfig } from './types';
+import { EventPayloadMap, PublisherOptions, QueueCraftConfig, WorkerConfig, Logger } from './types';
+import { ConsoleLogger } from './logger';
 
 /**
  * QueueCraft - Main class for managing RabbitMQ connections, publishers, and workers
@@ -27,15 +20,24 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
   private static connectionManager: ConnectionManager;
   private readonly publishers: Map<string, Publisher<T>> = new Map();
   private readonly workers: Map<string, Worker<T>> = new Map();
+  private readonly logger: Logger;
 
   /**
    * Creates a new QueueCraft instance
    * @param config QueueCraft configuration
    */
   constructor(config: QueueCraftConfig) {
+    this.logger = config.logger || new ConsoleLogger();
+    
     if (!QueueCraft.connectionManager) {
-      QueueCraft.connectionManager = new ConnectionManager(config.connection, config.defaultExchange);
+      QueueCraft.connectionManager = new ConnectionManager(
+        config.connection,
+        config.defaultExchange,
+        this.logger
+      );
     }
+    
+    this.logger.debug('QueueCraft instance created');
   }
 
   /**
@@ -55,8 +57,11 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
 
     const publisher = this.publishers.get(key);
     if (!publisher) {
+      this.logger.error(`Publisher not found for exchange: ${exchangeName}`);
       throw new Error(`Publisher not found for exchange: ${exchangeName}`);
     }
+    
+    this.logger.debug(`Publisher retrieved for exchange: ${exchangeName}`);
     return publisher;
   }
 
@@ -89,8 +94,11 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
 
     const worker = this.workers.get(key);
     if (!worker) {
+      this.logger.error(`Worker not found for events: ${events.join(', ')}`);
       throw new Error(`Worker not found for events: ${events.join(', ')}`);
     }
+    
+    this.logger.debug(`Worker retrieved for events: ${events.join(', ')}`);
     return worker;
   }
 
@@ -124,6 +132,7 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
    * @returns Promise that resolves when all connections are closed
    */
   async close(): Promise<void> {
+    this.logger.info('Closing QueueCraft instance');
     const closePromises: Promise<void>[] = [];
 
     // Close all workers
@@ -133,13 +142,17 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
 
     // Wait for all workers to stop
     await Promise.all(closePromises);
+    this.logger.debug('All workers stopped');
 
     // Close connection manager
     await QueueCraft.connectionManager.close();
+    this.logger.debug('Connection manager closed');
 
     // Clear maps
     this.publishers.clear();
     this.workers.clear();
+    
+    this.logger.info('QueueCraft instance closed successfully');
   }
 }
 
@@ -147,7 +160,9 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
  * Creates a new QueueCraft instance from environment variables
  * @returns QueueCraft instance
  */
-export function createFromEnv<T extends EventPayloadMap = EventPayloadMap>(): QueueCraft<T> {
+export function createFromEnv<T extends EventPayloadMap = EventPayloadMap>(
+  options: { logger?: Logger } = {}
+): QueueCraft<T> {
   // Load environment variables
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -155,6 +170,11 @@ export function createFromEnv<T extends EventPayloadMap = EventPayloadMap>(): Qu
   } catch (error) {
     // Ignore if dotenv is not available
   }
+
+  // Create logger if not provided
+  const logger = options.logger || new ConsoleLogger();
+  
+  logger.debug('Creating QueueCraft instance from environment variables');
 
   const config: QueueCraftConfig = {
     connection: {
@@ -179,7 +199,9 @@ export function createFromEnv<T extends EventPayloadMap = EventPayloadMap>(): Qu
       durable: process.env.RABBITMQ_EXCHANGE_DURABLE !== 'false',
       autoDelete: process.env.RABBITMQ_EXCHANGE_AUTODELETE === 'true',
     },
+    logger,
   };
 
+  logger.debug('Configuration loaded from environment variables');
   return new QueueCraft<T>(config);
 }

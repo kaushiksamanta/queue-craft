@@ -1,5 +1,6 @@
 import { Connection, Channel, connect, Replies } from 'amqplib';
-import { ConnectionOptions, ExchangeOptions, QueueOptions } from './types';
+import { ConnectionOptions, ExchangeOptions, QueueOptions, Logger } from './types';
+import { ConsoleLogger } from './logger';
 
 /**
  * Connection manager for RabbitMQ
@@ -12,6 +13,7 @@ export class ConnectionManager {
   private connecting: Promise<void> | null = null;
   private setupExchanges: Set<string> = new Set();
   private setupQueues: Set<string> = new Set();
+  private readonly logger: Logger;
 
   /**
    * Creates a new ConnectionManager instance
@@ -25,9 +27,11 @@ export class ConnectionManager {
       durable: true,
       autoDelete: false,
     },
+    logger?: Logger
   ) {
     this.options = options;
     this.defaultExchangeOptions = defaultExchangeOptions;
+    this.logger = logger || new ConsoleLogger();
   }
 
   /**
@@ -68,20 +72,20 @@ export class ConnectionManager {
 
         if (this.connection) {
           this.connection.on('error', err => {
-            console.error('RabbitMQ connection error:', err);
+            this.logger.error('RabbitMQ connection error:', err);
             this.handleConnectionError();
           });
 
           this.connection.on('close', () => {
-            console.warn('RabbitMQ connection closed');
+            this.logger.warn('RabbitMQ connection closed');
             this.handleConnectionError();
           });
 
           this.channel = await this.connection.createChannel();
-          console.log('Connected to RabbitMQ');
+          this.logger.info('Connected to RabbitMQ');
         }
       } catch (error) {
-        console.error('Failed to connect to RabbitMQ:', error);
+        this.logger.error('Failed to connect to RabbitMQ:', error);
         this.connection = null;
         this.channel = null;
         throw error;

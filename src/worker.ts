@@ -48,12 +48,10 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
       ...config.options?.retry,
     };
 
-    // Determine events to subscribe to
     let events: string[] = [];
 
     if (this.config.handlers) {
       if (typeof this.config.handlers === 'object') {
-        // Handlers is a direct event handler map
         events = Object.keys(this.config.handlers);
       }
     }
@@ -62,10 +60,8 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
       throw new Error('No events specified for worker');
     }
 
-    // Generate a queue name if not provided
     this.queueName = `queue.${Array.from(events).join('.')}`;
 
-    // Validate config
     if (!config.handlers) {
       throw new Error('Worker must have handlers defined');
     }
@@ -78,23 +74,18 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
   private async initialize(): Promise<void> {
     await this.connectionManager.connect();
 
-    // Set prefetch if provided
     if (this.config.options?.prefetch) {
       await this.connectionManager.setPrefetch(this.config.options.prefetch);
     }
 
-    // Assert exchange
     await this.connectionManager.assertExchange(this.exchangeName, this.config.options?.exchange);
 
-    // Assert queue
     await this.connectionManager.assertQueue(this.queueName, this.config.options?.queue);
 
-    // Determine events to bind based on handlers
     let events: string[] = [];
 
     if (this.config.handlers) {
       if (typeof this.config.handlers === 'object') {
-        // Handlers is a direct event handler map
         events = Object.keys(this.config.handlers);
       }
     }
@@ -103,7 +94,6 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
       throw new Error('No events specified for worker');
     }
 
-    // Bind queue to exchange for each event
     for (const event of events) {
       await this.connectionManager.bindQueue(this.queueName, this.exchangeName, String(event));
     }
@@ -140,13 +130,10 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
             return;
           }
 
-          // Create a flag to track if manual acknowledgment was used
           let manualAckUsed = false;
           
-          // Create metadata object with enhanced functionality
           const metadata: MessageMetadata = {
             properties: {
-              // Use spread first to copy all properties
               ...msg.properties,
               messageId: msg.properties.messageId,
               timestamp: msg.properties.timestamp,
@@ -159,11 +146,11 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
             },
             nack: () => {
               manualAckUsed = true;
-              channel.nack(msg, false, false); // Always reject without requeuing
+              channel.nack(msg, false, false);
             },
             requeue: () => {
               manualAckUsed = true;
-              channel.nack(msg, false, true); // Requeue puts the message back in the queue
+              channel.nack(msg, false, true);
             },
             deadLetter: async () => {
               manualAckUsed = true;
@@ -172,10 +159,8 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
           };
 
           try {
-            // Process with retry logic if enabled
             await this.processMessageWithRetry(event, payload, metadata, msg);
 
-            // Only acknowledge if manual acknowledgment wasn't used
             if (!manualAckUsed) {
               channel.ack(msg);
             }
@@ -188,11 +173,11 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
             if (retryCount < this.retryOptions.maxRetries) {
               // Requeue with incremented retry count
               await this.requeueWithRetryCount(msg, payload, event as string, retryCount + 1);
-              channel.ack(msg); // Ack the original message since we've requeued it
+              channel.ack(msg);
             } else {
               // Max retries exceeded, send to dead letter queue
               await this.sendToDeadLetterQueue(msg, payload, event as string, errorObj);
-              channel.ack(msg); // Ack to remove from main queue
+              channel.ack(msg);
             }
           }
         } catch (error: any) {
@@ -220,25 +205,20 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
   ): Promise<void> {
     if (!this.config.handlers) {
       console.warn(`No handlers found for event: ${String(event)}`);
-      // Send to dead letter queue if no handlers are defined
       await this.sendToDeadLetterQueue(msg, payload, String(event));
       return;
     }
 
     const eventKey = String(event) as keyof T & string;
-    
-    // Handlers will always be an object
+
     const handlerMap = this.config.handlers as EventHandlerMap<T>;
 
-    // Check if there's a handler for this event
     if (handlerMap[eventKey]) {
       const handler = handlerMap[eventKey];
-      // Ensure handler execution is properly awaited
       await handler(payload, metadata);
       return;
     }
-    
-    // If we get here, no handler was found for this event
+
     console.warn(`No handler found for event: ${String(event)}. Sending to dead letter queue.`);
     await this.sendToDeadLetterQueue(msg, payload, String(event));
   }
@@ -265,7 +245,6 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
     const channel = await this.connectionManager.getChannel();
     const headers = { ...msg.properties.headers, 'x-retry-count': retryCount };
 
-    // Calculate backoff delay
     const delay = Math.min(
       this.retryOptions.initialDelay * Math.pow(this.retryOptions.backoffFactor, retryCount - 1),
       this.retryOptions.maxDelay,
@@ -327,19 +306,16 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
     const deadLetterQueue = `${this.queueName}.dead-letter`;
 
     try {
-      // Check if methods exist (they might not in tests)
       if (
         typeof channel.assertExchange === 'function' &&
         typeof channel.assertQueue === 'function' &&
         typeof channel.bindQueue === 'function'
       ) {
-        // Ensure dead letter exchange and queue exist
         await channel.assertExchange(deadLetterExchange, 'topic', { durable: true });
         await channel.assertQueue(deadLetterQueue, { durable: true });
         await channel.bindQueue(deadLetterQueue, deadLetterExchange, '#');
       }
 
-      // Add failure information to headers
       const headers = {
         ...msg.properties.headers,
         'x-original-routing-key': routingKey,
@@ -347,9 +323,7 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
         'x-failed-at': new Date().toISOString(),
       };
 
-      // Check if publish method exists (it might not in tests)
       if (typeof channel.publish === 'function') {
-        // Publish to dead letter exchange
         await channel.publish(
           deadLetterExchange,
           routingKey,
@@ -357,18 +331,12 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
           { headers },
         );
       } else {
-        // Fallback for tests
         console.log(`Would send message to dead letter queue ${deadLetterQueue}`);
       }
-
-      // Message sent to dead letter queue
     } catch (error: any) {
-      // Log the error but don't fail - this allows tests to continue
       console.error('Error sending to dead letter queue:', error?.message || 'Unknown error');
     }
   }
-
-
 
   /**
    * Stops consuming events
@@ -387,12 +355,9 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
             ? error
             : new Error(error?.message || 'Unknown error stopping worker');
         console.error('Error stopping worker:', stopError);
-        // Reset consumer tag even if there was an error
         this.consumerTag = null;
       }
     }
-
-
   }
 
   /**
@@ -412,8 +377,6 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
       console.error('Error closing worker connection:', closeError);
     }
   }
-
-
 }
 
 /**

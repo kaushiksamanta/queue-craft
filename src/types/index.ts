@@ -167,4 +167,20 @@ export interface QueueCraftConfig {
   connection: ConnectionOptions;
   /** Default exchange options */
   defaultExchange?: Omit<ExchangeOptions, 'name'>;
+  /** Logger instance */
+  logger?: Logger;
+}
+
+/**
+ * Logger interface
+ */
+export interface Logger {
+  /** Log a debug message */
+  debug(message: string, ...meta: any[]): void;
+  /** Log an info message */
+  info(message: string, ...meta: any[]): void;
+  /** Log a warning message */
+  warn(message: string, ...meta: any[]): void;
+  /** Log an error message */
+  error(message: string, ...meta: any[]): void;
 }
