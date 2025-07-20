@@ -1,6 +1,6 @@
-# QueueCraft
+# Queue-craft
 
-QueueCraft is a TypeScript-based Node.js framework that simplifies event-driven communication using RabbitMQ (AMQP protocol). It abstracts away the complexities of managing RabbitMQ queues, exchanges, publishing, and consuming messages with built-in reliability features.
+Queue-craft is a TypeScript-based Node.js framework that simplifies event-driven communication using RabbitMQ (AMQP protocol). It abstracts away the complexities of managing RabbitMQ queues, exchanges, publishing, and consuming messages with built-in reliability features.
 
 ## Features
 
@@ -20,13 +20,13 @@ QueueCraft is a TypeScript-based Node.js framework that simplifies event-driven 
 ## Installation
 
 ```bash
-npm install queuecraft
+npm install queue-craft
 ```
 
 Or with yarn:
 
 ```bash
-yarn add queuecraft
+yarn add queue-craft
 ```
 
 ## Quick Start
@@ -35,7 +35,7 @@ yarn add queuecraft
 
 ```typescript
 // types.ts
-import { EventPayloadMap } from 'queuecraft';
+import { EventPayloadMap } from 'queue-craft';
 
 // NOTE: Each QueueCraft instance is type-safe for a single event payload map.
 // To use a different event map, create a new QueueCraft instance.
@@ -51,7 +51,7 @@ export interface MyEventPayloadMap extends EventPayloadMap {
 
 ```typescript
 // publisher.ts
-import { QueueCraft } from 'queuecraft';
+import { QueueCraft } from 'queue-craft';
 import { MyEventPayloadMap } from './types';
 
 // Create a QueueCraft instance with your event payload map
@@ -97,7 +97,7 @@ publishUserCreated()
 
 ```typescript
 // worker.ts
-import { QueueCraft } from 'queuecraft';
+import { QueueCraft } from 'queue-craft';
 import { MyEventPayloadMap } from './types';
 
 // Create a QueueCraft instance with your event payload map

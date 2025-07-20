@@ -3,51 +3,51 @@
  */
 export interface ExampleEventPayloadMap {
   'user.created': {
-    id: string;
-    name: string;
-    email: string;
-    createdAt: string;
-  };
+    id: string
+    name: string
+    email: string
+    createdAt: string
+  }
   'user.updated': {
-    id: string;
-    name?: string;
-    email?: string;
-    updatedAt: string;
-  };
+    id: string
+    name?: string
+    email?: string
+    updatedAt: string
+  }
   'order.placed': {
-    id: string;
-    userId: string;
+    id: string
+    userId: string
     items: Array<{
-      productId: string;
-      quantity: number;
-      price: number;
-    }>;
-    total: number;
-    placedAt: string;
-  };
+      productId: string
+      quantity: number
+      price: number
+    }>
+    total: number
+    placedAt: string
+  }
   'order.shipped': {
-    id: string;
-    trackingNumber: string;
-    shippedAt: string;
-  };
+    id: string
+    trackingNumber: string
+    shippedAt: string
+  }
   'notification.send': {
-    type: 'email' | 'sms' | 'push';
-    recipient: string;
-    subject?: string;
-    content: string;
-    metadata?: Record<string, any>;
-  };
+    type: 'email' | 'sms' | 'push'
+    recipient: string
+    subject?: string
+    content: string
+    metadata?: Record<string, any>
+  }
   'notification.email': {
-    recipient: string;
-    subject: string;
-    content: string;
-    metadata?: Record<string, any>;
-  };
+    recipient: string
+    subject: string
+    content: string
+    metadata?: Record<string, any>
+  }
   'notification.sms': {
-    phoneNumber: string;
-    content: string;
-    metadata?: Record<string, any>;
-  };
+    phoneNumber: string
+    content: string
+    metadata?: Record<string, any>
+  }
   // Allow dead letter event for DLQ worker
-  'dead-letter': any;
+  'dead-letter': any
 }

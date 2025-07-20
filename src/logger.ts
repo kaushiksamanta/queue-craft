@@ -1,14 +1,14 @@
-import winston from 'winston';
+import winston from 'winston'
 
 /**
  * Logger interface for QueueCraft
  * Provides a consistent logging API regardless of the underlying implementation
  */
 export interface Logger {
-  debug(message: string, ...meta: any[]): void;
-  info(message: string, ...meta: any[]): void;
-  warn(message: string, ...meta: any[]): void;
-  error(message: string, ...meta: any[]): void;
+  debug(message: string, ...meta: any[]): void
+  info(message: string, ...meta: any[]): void
+  warn(message: string, ...meta: any[]): void
+  error(message: string, ...meta: any[]): void
 }
 
 /**
@@ -16,22 +16,22 @@ export interface Logger {
  */
 export interface WinstonLoggerOptions {
   /** Minimum log level to output */
-  level?: 'debug' | 'info' | 'warn' | 'error';
+  level?: 'debug' | 'info' | 'warn' | 'error'
   /** Whether to colorize output (default: true) */
-  colorize?: boolean;
+  colorize?: boolean
   /** Whether to include timestamps (default: true) */
-  timestamp?: boolean;
+  timestamp?: boolean
   /** Custom Winston transports */
-  transports?: winston.transport[];
+  transports?: winston.transport[]
   /** Whether to silence logs (useful for testing) */
-  silent?: boolean;
+  silent?: boolean
 }
 
 /**
  * Winston-based logger implementation
  */
 export class WinstonLogger implements Logger {
-  private logger: winston.Logger;
+  private logger: winston.Logger
 
   /**
    * Creates a new Winston logger
@@ -44,7 +44,7 @@ export class WinstonLogger implements Logger {
       timestamp = true,
       transports = [],
       silent = false,
-    } = options;
+    } = options
 
     // Create default console transport if none provided
     const defaultTransports: winston.transport[] = transports.length
@@ -55,20 +55,22 @@ export class WinstonLogger implements Logger {
             format: winston.format.combine(
               timestamp ? winston.format.timestamp() : winston.format.simple(),
               colorize ? winston.format.colorize() : winston.format.simple(),
-              winston.format.printf(({ timestamp, level, message, ...rest }: Record<string, any>) => {
-                const meta = Object.keys(rest).length ? JSON.stringify(rest) : '';
-                return `${timestamp ? `[${timestamp}] ` : ''}${level}: ${message} ${meta}`;
-              })
+              winston.format.printf(
+                ({ timestamp, level, message, ...rest }: Record<string, any>) => {
+                  const meta = Object.keys(rest).length ? JSON.stringify(rest) : ''
+                  return `${timestamp ? `[${timestamp}] ` : ''}${level}: ${message} ${meta}`
+                },
+              ),
             ),
           }),
-        ];
+        ]
 
     // Create Winston logger
     this.logger = winston.createLogger({
       level,
       transports: defaultTransports,
       silent,
-    });
+    })
   }
 
   /**
@@ -77,7 +79,7 @@ export class WinstonLogger implements Logger {
    * @param meta Additional metadata
    */
   debug(message: string, ...meta: any[]): void {
-    this.logger.debug(message, ...meta);
+    this.logger.debug(message, ...meta)
   }
 
   /**
@@ -86,7 +88,7 @@ export class WinstonLogger implements Logger {
    * @param meta Additional metadata
    */
   info(message: string, ...meta: any[]): void {
-    this.logger.info(message, ...meta);
+    this.logger.info(message, ...meta)
   }
 
   /**
@@ -95,7 +97,7 @@ export class WinstonLogger implements Logger {
    * @param meta Additional metadata
    */
   warn(message: string, ...meta: any[]): void {
-    this.logger.warn(message, ...meta);
+    this.logger.warn(message, ...meta)
   }
 
   /**
@@ -104,7 +106,7 @@ export class WinstonLogger implements Logger {
    * @param meta Additional metadata
    */
   error(message: string, ...meta: any[]): void {
-    this.logger.error(message, ...meta);
+    this.logger.error(message, ...meta)
   }
 }
 
@@ -126,7 +128,7 @@ export class ConsoleLogger implements Logger {
    */
   debug(message: string, ...meta: any[]): void {
     if (!this.options.silent) {
-      console.debug(message, ...meta);
+      console.debug(message, ...meta)
     }
   }
 
@@ -137,7 +139,7 @@ export class ConsoleLogger implements Logger {
    */
   info(message: string, ...meta: any[]): void {
     if (!this.options.silent) {
-      console.info(message, ...meta);
+      console.info(message, ...meta)
     }
   }
 
@@ -148,7 +150,7 @@ export class ConsoleLogger implements Logger {
    */
   warn(message: string, ...meta: any[]): void {
     if (!this.options.silent) {
-      console.warn(message, ...meta);
+      console.warn(message, ...meta)
     }
   }
 
@@ -159,7 +161,7 @@ export class ConsoleLogger implements Logger {
    */
   error(message: string, ...meta: any[]): void {
     if (!this.options.silent) {
-      console.error(message, ...meta);
+      console.error(message, ...meta)
     }
   }
 }
@@ -170,5 +172,5 @@ export class ConsoleLogger implements Logger {
  * @returns Logger instance
  */
 export function createDefaultLogger(options: WinstonLoggerOptions = {}): Logger {
-  return new WinstonLogger(options);
+  return new WinstonLogger(options)
 }

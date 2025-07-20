@@ -1,5 +1,5 @@
 {
-  "name": "queuecraft",
+  "name": "queue-craft",
   "version": "0.1.0",
   "description": "TypeScript-based Node.js framework for RabbitMQ event-driven communication",
   "main": "dist/index.js",

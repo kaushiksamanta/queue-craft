@@ -1,13 +1,13 @@
-import { ConnectionManager } from './connection';
-import { EventPayloadMap, PublisherOptions } from './types';
+import { ConnectionManager } from './connection'
+import { EventPayloadMap, PublisherOptions } from './types'
 
 /**
  * Publisher class for publishing events to RabbitMQ
  */
 export class Publisher<T extends EventPayloadMap = EventPayloadMap> {
-  private connectionManager: ConnectionManager;
-  private exchangeName: string;
-  private options: PublisherOptions;
+  private connectionManager: ConnectionManager
+  private exchangeName: string
+  private options: PublisherOptions
 
   /**
    * Creates a new Publisher instance
@@ -20,9 +20,9 @@ export class Publisher<T extends EventPayloadMap = EventPayloadMap> {
     exchangeName = 'events',
     options: PublisherOptions = {},
   ) {
-    this.connectionManager = connectionManager;
-    this.exchangeName = exchangeName;
-    this.options = options;
+    this.connectionManager = connectionManager
+    this.exchangeName = exchangeName
+    this.options = options
   }
 
   /**
@@ -30,8 +30,8 @@ export class Publisher<T extends EventPayloadMap = EventPayloadMap> {
    * @returns Promise that resolves when the publisher is initialized
    */
   private async initialize(): Promise<void> {
-    await this.connectionManager.connect();
-    await this.connectionManager.assertExchange(this.exchangeName, this.options.exchange);
+    await this.connectionManager.connect()
+    await this.connectionManager.assertExchange(this.exchangeName, this.options.exchange)
   }
 
   /**
@@ -45,19 +45,19 @@ export class Publisher<T extends EventPayloadMap = EventPayloadMap> {
     event: E,
     payload: T[E],
     options: {
-      headers?: Record<string, any>;
-      messageId?: string;
-      timestamp?: number;
-      contentType?: string;
-      contentEncoding?: string;
-      persistent?: boolean;
+      headers?: Record<string, any>
+      messageId?: string
+      timestamp?: number
+      contentType?: string
+      contentEncoding?: string
+      persistent?: boolean
     } = {},
   ): Promise<boolean> {
-    await this.initialize();
+    await this.initialize()
 
-    const channel = await this.connectionManager.getChannel();
-    const eventName = String(event);
-    const content = Buffer.from(JSON.stringify(payload));
+    const channel = await this.connectionManager.getChannel()
+    const eventName = String(event)
+    const content = Buffer.from(JSON.stringify(payload))
 
     const {
       headers,
@@ -66,7 +66,7 @@ export class Publisher<T extends EventPayloadMap = EventPayloadMap> {
       contentType = 'application/json',
       contentEncoding = 'utf-8',
       persistent = true,
-    } = options;
+    } = options
 
     return channel.publish(this.exchangeName, eventName, content, {
       contentType,
@@ -75,7 +75,7 @@ export class Publisher<T extends EventPayloadMap = EventPayloadMap> {
       messageId,
       timestamp,
       persistent,
-    });
+    })
   }
 
   /**
@@ -83,7 +83,7 @@ export class Publisher<T extends EventPayloadMap = EventPayloadMap> {
    * @returns Promise that resolves when the publisher is closed
    */
   async close(): Promise<void> {
-    await this.connectionManager.close();
+    await this.connectionManager.close()
   }
 }
 
@@ -99,5 +99,5 @@ export function createPublisher<T extends EventPayloadMap = EventPayloadMap>(
   exchangeName = 'events',
   options: PublisherOptions = {},
 ): Publisher<T> {
-  return new Publisher<T>(connectionManager, exchangeName, options);
+  return new Publisher<T>(connectionManager, exchangeName, options)
 }

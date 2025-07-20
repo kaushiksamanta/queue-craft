@@ -1,18 +1,18 @@
-import { QueueCraft } from '../../src';
-import { ExampleEventPayloadMap } from '../shared-types';
-import { v4 as uuidv4 } from 'uuid';
-import { WinstonLogger, WinstonLoggerOptions } from '../../src/logger';
-import winston from 'winston';
+import { QueueCraft } from '../../src'
+import { ExampleEventPayloadMap } from '../shared-types'
+import { v4 as uuidv4 } from 'uuid'
+import { WinstonLogger, WinstonLoggerOptions } from '../../src/logger'
+import winston from 'winston'
 
-function createCustomWinstonLogger(): WinstonLogger {
+const createCustomWinstonLogger = (): WinstonLogger => {
   const logFormat = winston.format.combine(
     winston.format.timestamp(),
     winston.format.colorize(),
     winston.format.printf(({ timestamp, level, message, ...meta }: Record<string, any>) => {
-      const metaString = Object.keys(meta).length ? JSON.stringify(meta) : '';
-      return `[${timestamp}] ${level}: ${message} ${metaString}`;
-    })
-  );
+      const metaString = Object.keys(meta).length ? JSON.stringify(meta) : ''
+      return `[${timestamp}] ${level}: ${message} ${metaString}`
+    }),
+  )
 
   const options: WinstonLoggerOptions = {
     level: 'debug',
@@ -23,25 +23,19 @@ function createCustomWinstonLogger(): WinstonLogger {
       new winston.transports.File({
         filename: 'logs/error.log',
         level: 'error',
-        format: winston.format.combine(
-          winston.format.timestamp(),
-          winston.format.json()
-        ),
+        format: winston.format.combine(winston.format.timestamp(), winston.format.json()),
       }),
       new winston.transports.File({
         filename: 'logs/combined.log',
-        format: winston.format.combine(
-          winston.format.timestamp(),
-          winston.format.json()
-        ),
+        format: winston.format.combine(winston.format.timestamp(), winston.format.json()),
       }),
     ],
-  };
+  }
 
-  return new WinstonLogger(options);
+  return new WinstonLogger(options)
 }
 
-const logger = createCustomWinstonLogger();
+const logger = createCustomWinstonLogger()
 
 const queueCraft = new QueueCraft<ExampleEventPayloadMap>({
   connection: {
@@ -51,36 +45,36 @@ const queueCraft = new QueueCraft<ExampleEventPayloadMap>({
     password: process.env.RABBITMQ_PASSWORD || 'guest',
   },
   logger,
-});
+})
 
-const publisher = queueCraft.createPublisher();
+const publisher = queueCraft.createPublisher()
 
-async function runPublisherDemo() {
-  logger.info('Publisher service starting...');
+const runPublisherDemo = async () => {
+  logger.info('Publisher service starting...')
 
   try {
-    const userId = uuidv4();
-    logger.info(`Publishing user.created event for user ${userId}`);
+    const userId = uuidv4()
+    logger.info(`Publishing user.created event for user ${userId}`)
     await publisher.publish('user.created', {
       id: userId,
       name: 'John Doe',
       email: 'john.doe@example.com',
       createdAt: new Date().toISOString(),
-    });
+    })
 
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise(resolve => setTimeout(resolve, 1000))
 
-    logger.info(`Publishing user.updated event for user ${userId}`);
+    logger.info(`Publishing user.updated event for user ${userId}`)
     await publisher.publish('user.updated', {
       id: userId,
       name: 'John Smith',
       updatedAt: new Date().toISOString(),
-    });
+    })
 
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise(resolve => setTimeout(resolve, 1000))
 
-    const orderId = uuidv4();
-    logger.info(`Publishing order.placed event for order ${orderId}`);
+    const orderId = uuidv4()
+    logger.info(`Publishing order.placed event for order ${orderId}`)
     await publisher.publish('order.placed', {
       id: orderId,
       userId: userId,
@@ -98,20 +92,20 @@ async function runPublisherDemo() {
       ],
       total: 109.97,
       placedAt: new Date().toISOString(),
-    });
+    })
 
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise(resolve => setTimeout(resolve, 1000))
 
-    logger.info(`Publishing order.shipped event for order ${orderId}`);
+    logger.info(`Publishing order.shipped event for order ${orderId}`)
     await publisher.publish('order.shipped', {
       id: orderId,
       trackingNumber: 'TRK-' + Math.floor(Math.random() * 1000000),
       shippedAt: new Date().toISOString(),
-    });
+    })
 
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise(resolve => setTimeout(resolve, 1000))
 
-    logger.info('Publishing notification.send event');
+    logger.info('Publishing notification.send event')
     await publisher.publish('notification.send', {
       type: 'email',
       recipient: 'john.doe@example.com',
@@ -121,11 +115,11 @@ async function runPublisherDemo() {
         orderId,
         trackingNumber: 'TRK-' + Math.floor(Math.random() * 1000000),
       },
-    });
+    })
 
-    logger.info('All events published successfully');
+    logger.info('All events published successfully')
   } catch (error) {
-    logger.error('Error in publisher service:', { error });
+    logger.error('Error in publisher service:', { error })
   }
 }
 
@@ -137,6 +131,6 @@ runPublisherDemo()
         .close()
         .then(() => logger.info('Publisher service shut down gracefully'))
         .catch(error => logger.error('Error during shutdown', { error }))
-        .finally(() => process.exit(0));
-    }, 2000);
-  });
+        .finally(() => process.exit(0))
+    }, 2000)
+  })

@@ -1,19 +1,19 @@
-import { Connection, Channel, connect, Replies } from 'amqplib';
-import { ConnectionOptions, ExchangeOptions, QueueOptions, Logger } from './types';
-import { ConsoleLogger } from './logger';
+import { Connection, Channel, connect, Replies } from 'amqplib'
+import { ConnectionOptions, ExchangeOptions, QueueOptions, Logger } from './types'
+import { ConsoleLogger } from './logger'
 
 /**
  * Connection manager for RabbitMQ
  */
 export class ConnectionManager {
-  private connection: Connection | null = null;
-  private channel: Channel | null = null;
-  private readonly options: ConnectionOptions;
-  private readonly defaultExchangeOptions: Omit<ExchangeOptions, 'name'>;
-  private connecting: Promise<void> | null = null;
-  private setupExchanges: Set<string> = new Set();
-  private setupQueues: Set<string> = new Set();
-  private readonly logger: Logger;
+  private connection: Connection | null = null
+  private channel: Channel | null = null
+  private readonly options: ConnectionOptions
+  private readonly defaultExchangeOptions: Omit<ExchangeOptions, 'name'>
+  private connecting: Promise<void> | null = null
+  private setupExchanges: Set<string> = new Set()
+  private setupQueues: Set<string> = new Set()
+  private readonly logger: Logger
 
   /**
    * Creates a new ConnectionManager instance
@@ -27,11 +27,11 @@ export class ConnectionManager {
       durable: true,
       autoDelete: false,
     },
-    logger?: Logger
+    logger?: Logger,
   ) {
-    this.options = options;
-    this.defaultExchangeOptions = defaultExchangeOptions;
-    this.logger = logger || new ConsoleLogger();
+    this.options = options
+    this.defaultExchangeOptions = defaultExchangeOptions
+    this.logger = logger || new ConsoleLogger()
   }
 
   /**
@@ -39,14 +39,14 @@ export class ConnectionManager {
    * @returns Connection URL
    */
   private getConnectionUrl(): string {
-    const { host, port, username, password, vhost } = this.options;
-    const encodedUsername = encodeURIComponent(username);
-    const encodedPassword = encodeURIComponent(password);
-    const encodedVhost = vhost ? encodeURIComponent(vhost) : '';
+    const { host, port, username, password, vhost } = this.options
+    const encodedUsername = encodeURIComponent(username)
+    const encodedPassword = encodeURIComponent(password)
+    const encodedVhost = vhost ? encodeURIComponent(vhost) : ''
 
     return `amqp://${encodedUsername}:${encodedPassword}@${host}:${port}${
       encodedVhost ? '/' + encodedVhost : ''
-    }`;
+    }`
   }
 
   /**
@@ -55,56 +55,56 @@ export class ConnectionManager {
    */
   async connect(): Promise<void> {
     if (this.connection && this.channel) {
-      return;
+      return
     }
 
     if (this.connecting) {
-      return this.connecting;
+      return this.connecting
     }
 
     this.connecting = (async () => {
       try {
-        const url = this.getConnectionUrl();
+        const url = this.getConnectionUrl()
         this.connection = await connect(url, {
           timeout: this.options.timeout,
           heartbeat: this.options.heartbeat,
-        });
+        })
 
         if (this.connection) {
           this.connection.on('error', err => {
-            this.logger.error('RabbitMQ connection error:', err);
-            this.handleConnectionError();
-          });
+            this.logger.error('RabbitMQ connection error:', err)
+            this.handleConnectionError()
+          })
 
           this.connection.on('close', () => {
-            this.logger.warn('RabbitMQ connection closed');
-            this.handleConnectionError();
-          });
+            this.logger.warn('RabbitMQ connection closed')
+            this.handleConnectionError()
+          })
 
-          this.channel = await this.connection.createChannel();
-          this.logger.info('Connected to RabbitMQ');
+          this.channel = await this.connection.createChannel()
+          this.logger.info('Connected to RabbitMQ')
         }
       } catch (error) {
-        this.logger.error('Failed to connect to RabbitMQ:', error);
-        this.connection = null;
-        this.channel = null;
-        throw error;
+        this.logger.error('Failed to connect to RabbitMQ:', error)
+        this.connection = null
+        this.channel = null
+        throw error
       } finally {
-        this.connecting = null;
+        this.connecting = null
       }
-    })();
+    })()
 
-    return this.connecting;
+    return this.connecting
   }
 
   /**
    * Handles connection errors
    */
   private handleConnectionError(): void {
-    this.connection = null;
-    this.channel = null;
-    this.setupExchanges.clear();
-    this.setupQueues.clear();
+    this.connection = null
+    this.channel = null
+    this.setupExchanges.clear()
+    this.setupQueues.clear()
   }
 
   /**
@@ -114,14 +114,14 @@ export class ConnectionManager {
    */
   async getChannel(): Promise<Channel> {
     if (!this.channel) {
-      await this.connect();
+      await this.connect()
     }
 
     if (!this.channel) {
-      throw new Error('Not connected to RabbitMQ');
+      throw new Error('Not connected to RabbitMQ')
     }
 
-    return this.channel;
+    return this.channel
   }
 
   /**
@@ -134,23 +134,23 @@ export class ConnectionManager {
     name: string,
     options: Omit<ExchangeOptions, 'name'> = this.defaultExchangeOptions,
   ): Promise<Replies.AssertExchange> {
-    const channel = await this.getChannel();
+    const channel = await this.getChannel()
 
     // Skip if already set up
     if (this.setupExchanges.has(name)) {
-      return { exchange: name };
+      return { exchange: name }
     }
 
-    const { type = 'topic', durable = true, autoDelete = false, arguments: args } = options;
+    const { type = 'topic', durable = true, autoDelete = false, arguments: args } = options
 
     const result = await channel.assertExchange(name, type, {
       durable,
       autoDelete,
       arguments: args,
-    });
+    })
 
-    this.setupExchanges.add(name);
-    return result;
+    this.setupExchanges.add(name)
+    return result
   }
 
   /**
@@ -159,25 +159,28 @@ export class ConnectionManager {
    * @param options Queue options
    * @returns Promise that resolves when the queue is asserted
    */
-  async assertQueue(name: string, options: Omit<QueueOptions, 'name'> = {}): Promise<Replies.AssertQueue> {
-    const channel = await this.getChannel();
+  async assertQueue(
+    name: string,
+    options: Omit<QueueOptions, 'name'> = {},
+  ): Promise<Replies.AssertQueue> {
+    const channel = await this.getChannel()
 
     // Skip if already set up
     if (this.setupQueues.has(name)) {
-      return { queue: name, messageCount: 0, consumerCount: 0 };
+      return { queue: name, messageCount: 0, consumerCount: 0 }
     }
 
-    const { durable = true, autoDelete = false, exclusive = false, arguments: args } = options;
+    const { durable = true, autoDelete = false, exclusive = false, arguments: args } = options
 
     const result = await channel.assertQueue(name, {
       durable,
       autoDelete,
       exclusive,
       arguments: args,
-    });
+    })
 
-    this.setupQueues.add(name);
-    return result;
+    this.setupQueues.add(name)
+    return result
   }
 
   /**
@@ -188,8 +191,8 @@ export class ConnectionManager {
    * @returns Promise that resolves when the binding is created
    */
   async bindQueue(queue: string, exchange: string, pattern: string): Promise<Replies.Empty> {
-    const channel = await this.getChannel();
-    return channel.bindQueue(queue, exchange, pattern);
+    const channel = await this.getChannel()
+    return channel.bindQueue(queue, exchange, pattern)
   }
 
   /**
@@ -198,8 +201,8 @@ export class ConnectionManager {
    * @returns Promise that resolves when the prefetch count is set
    */
   async setPrefetch(count: number): Promise<void> {
-    const channel = await this.getChannel();
-    await channel.prefetch(count);
+    const channel = await this.getChannel()
+    await channel.prefetch(count)
   }
 
   /**
@@ -208,16 +211,16 @@ export class ConnectionManager {
    */
   async close(): Promise<void> {
     if (this.channel) {
-      await this.channel.close();
-      this.channel = null;
+      await this.channel.close()
+      this.channel = null
     }
 
     if (this.connection) {
-      await this.connection.close();
-      this.connection = null;
+      await this.connection.close()
+      this.connection = null
     }
 
-    this.setupExchanges.clear();
-    this.setupQueues.clear();
+    this.setupExchanges.clear()
+    this.setupQueues.clear()
   }
 }

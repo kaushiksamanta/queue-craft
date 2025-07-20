@@ -2,42 +2,42 @@
  * QueueCraft - A TypeScript-based Node.js framework for RabbitMQ event-driven communication
  */
 
-export * from './types';
-export { ConnectionManager } from './connection';
-export { Publisher, createPublisher } from './publisher';
-export { Worker, createWorker } from './worker';
+export * from './types'
+export { ConnectionManager } from './connection'
+export { Publisher, createPublisher } from './publisher'
+export { Worker, createWorker } from './worker'
 
-import { ConnectionManager } from './connection';
-import { Publisher, createPublisher } from './publisher';
-import { Worker, createWorker } from './worker';
-import { EventPayloadMap, PublisherOptions, QueueCraftConfig, WorkerConfig, Logger } from './types';
-import { ConsoleLogger } from './logger';
+import { ConnectionManager } from './connection'
+import { Publisher, createPublisher } from './publisher'
+import { Worker, createWorker } from './worker'
+import { EventPayloadMap, PublisherOptions, QueueCraftConfig, WorkerConfig, Logger } from './types'
+import { ConsoleLogger } from './logger'
 
 /**
  * QueueCraft - Main class for managing RabbitMQ connections, publishers, and workers
  */
 export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
-  private static connectionManager: ConnectionManager;
-  private readonly publishers: Map<string, Publisher<T>> = new Map();
-  private readonly workers: Map<string, Worker<T>> = new Map();
-  private readonly logger: Logger;
+  private static connectionManager: ConnectionManager
+  private readonly publishers: Map<string, Publisher<T>> = new Map()
+  private readonly workers: Map<string, Worker<T>> = new Map()
+  private readonly logger: Logger
 
   /**
    * Creates a new QueueCraft instance
    * @param config QueueCraft configuration
    */
   constructor(config: QueueCraftConfig) {
-    this.logger = config.logger || new ConsoleLogger();
-    
+    this.logger = config.logger || new ConsoleLogger()
+
     if (!QueueCraft.connectionManager) {
       QueueCraft.connectionManager = new ConnectionManager(
         config.connection,
         config.defaultExchange,
-        this.logger
-      );
+        this.logger,
+      )
     }
-    
-    this.logger.debug('QueueCraft instance created');
+
+    this.logger.debug('QueueCraft instance created')
   }
 
   /**
@@ -47,22 +47,22 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
    * @returns Publisher instance
    */
   createPublisher(exchangeName = 'events', options: PublisherOptions = {}): Publisher<T> {
-    const key = `publisher:${exchangeName}`;
+    const key = `publisher:${exchangeName}`
 
     if (!this.publishers.has(key)) {
-      const publisher = createPublisher<T>(QueueCraft.connectionManager, exchangeName, options);
+      const publisher = createPublisher<T>(QueueCraft.connectionManager, exchangeName, options)
 
-      this.publishers.set(key, publisher);
+      this.publishers.set(key, publisher)
     }
 
-    const publisher = this.publishers.get(key);
+    const publisher = this.publishers.get(key)
     if (!publisher) {
-      this.logger.error(`Publisher not found for exchange: ${exchangeName}`);
-      throw new Error(`Publisher not found for exchange: ${exchangeName}`);
+      this.logger.error(`Publisher not found for exchange: ${exchangeName}`)
+      throw new Error(`Publisher not found for exchange: ${exchangeName}`)
     }
-    
-    this.logger.debug(`Publisher retrieved for exchange: ${exchangeName}`);
-    return publisher;
+
+    this.logger.debug(`Publisher retrieved for exchange: ${exchangeName}`)
+    return publisher
   }
 
   /**
@@ -71,35 +71,32 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
    * @param exchangeName Exchange name
    * @returns Worker instance
    */
-  createWorker(
-    config: WorkerConfig<T>,
-    exchangeName = 'events',
-  ): Worker<T> {
+  createWorker(config: WorkerConfig<T>, exchangeName = 'events'): Worker<T> {
     // Determine events to use for the key based on handlers
-    let events: string[] = [];
+    let events: string[] = []
 
     if (config.handlers) {
       if (typeof config.handlers === 'object') {
         // Handlers is a direct event handler map
-        events = Object.keys(config.handlers);
+        events = Object.keys(config.handlers)
       }
     }
 
-    const key = `worker:${exchangeName}:${events.join('.')}`;
+    const key = `worker:${exchangeName}:${events.join('.')}`
 
     if (!this.workers.has(key)) {
-      const worker = createWorker<T>(QueueCraft.connectionManager, config, exchangeName);
-      this.workers.set(key, worker);
+      const worker = createWorker<T>(QueueCraft.connectionManager, config, exchangeName)
+      this.workers.set(key, worker)
     }
 
-    const worker = this.workers.get(key);
+    const worker = this.workers.get(key)
     if (!worker) {
-      this.logger.error(`Worker not found for events: ${events.join(', ')}`);
-      throw new Error(`Worker not found for events: ${events.join(', ')}`);
+      this.logger.error(`Worker not found for events: ${events.join(', ')}`)
+      throw new Error(`Worker not found for events: ${events.join(', ')}`)
     }
-    
-    this.logger.debug(`Worker retrieved for events: ${events.join(', ')}`);
-    return worker;
+
+    this.logger.debug(`Worker retrieved for events: ${events.join(', ')}`)
+    return worker
   }
 
   /**
@@ -114,17 +111,17 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
     event: E,
     payload: T[E],
     options: {
-      headers?: Record<string, any>;
-      messageId?: string;
-      timestamp?: number;
-      contentType?: string;
-      contentEncoding?: string;
-      persistent?: boolean;
+      headers?: Record<string, any>
+      messageId?: string
+      timestamp?: number
+      contentType?: string
+      contentEncoding?: string
+      persistent?: boolean
     } = {},
     exchangeName = 'events',
   ): Promise<boolean> {
-    const publisher = this.createPublisher(exchangeName);
-    return publisher.publish(event, payload, options);
+    const publisher = this.createPublisher(exchangeName)
+    return publisher.publish(event, payload, options)
   }
 
   /**
@@ -132,27 +129,27 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
    * @returns Promise that resolves when all connections are closed
    */
   async close(): Promise<void> {
-    this.logger.info('Closing QueueCraft instance');
-    const closePromises: Promise<void>[] = [];
+    this.logger.info('Closing QueueCraft instance')
+    const closePromises: Promise<void>[] = []
 
     // Close all workers
     for (const worker of this.workers.values()) {
-      closePromises.push(worker.stop());
+      closePromises.push(worker.stop())
     }
 
     // Wait for all workers to stop
-    await Promise.all(closePromises);
-    this.logger.debug('All workers stopped');
+    await Promise.all(closePromises)
+    this.logger.debug('All workers stopped')
 
     // Close connection manager
-    await QueueCraft.connectionManager.close();
-    this.logger.debug('Connection manager closed');
+    await QueueCraft.connectionManager.close()
+    this.logger.debug('Connection manager closed')
 
     // Clear maps
-    this.publishers.clear();
-    this.workers.clear();
-    
-    this.logger.info('QueueCraft instance closed successfully');
+    this.publishers.clear()
+    this.workers.clear()
+
+    this.logger.info('QueueCraft instance closed successfully')
   }
 }
 
@@ -161,20 +158,20 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
  * @returns QueueCraft instance
  */
 export function createFromEnv<T extends EventPayloadMap = EventPayloadMap>(
-  options: { logger?: Logger } = {}
+  options: { logger?: Logger } = {},
 ): QueueCraft<T> {
   // Load environment variables
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    require('dotenv').config();
+    require('dotenv').config()
   } catch (error) {
     // Ignore if dotenv is not available
   }
 
   // Create logger if not provided
-  const logger = options.logger || new ConsoleLogger();
-  
-  logger.debug('Creating QueueCraft instance from environment variables');
+  const logger = options.logger || new ConsoleLogger()
+
+  logger.debug('Creating QueueCraft instance from environment variables')
 
   const config: QueueCraftConfig = {
     connection: {
@@ -200,8 +197,8 @@ export function createFromEnv<T extends EventPayloadMap = EventPayloadMap>(
       autoDelete: process.env.RABBITMQ_EXCHANGE_AUTODELETE === 'true',
     },
     logger,
-  };
+  }
 
-  logger.debug('Configuration loaded from environment variables');
-  return new QueueCraft<T>(config);
+  logger.debug('Configuration loaded from environment variables')
+  return new QueueCraft<T>(config)
 }
