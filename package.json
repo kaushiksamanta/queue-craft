@@ -29,6 +29,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@sinclair/typebox": "^0.34.38",
     "amqplib": "^0.8.0",
     "dotenv": "^16.3.1",
     "uuid": "^9.0.0",

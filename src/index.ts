@@ -10,8 +10,18 @@ export { Worker, createWorker } from './worker'
 import { ConnectionManager } from './connection'
 import { Publisher, createPublisher } from './publisher'
 import { Worker, createWorker } from './worker'
-import { EventPayloadMap, PublisherOptions, QueueCraftConfig, WorkerConfig, Logger } from './types'
+import {
+  EventPayloadMap,
+  PublisherOptions,
+  QueueCraftConfig,
+  WorkerConfig,
+  Logger,
+  QueueCraftConfigSchema,
+  WorkerOptionsSchema,
+  PublisherOptionsSchema,
+} from './types'
 import { ConsoleLogger } from './logger'
+import { validateSchema } from './utils/validation'
 
 /**
  * QueueCraft - Main class for managing RabbitMQ connections, publishers, and workers
@@ -27,6 +37,13 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
    * @param config QueueCraft configuration
    */
   constructor(config: QueueCraftConfig) {
+    // Validate QueueCraft configuration
+    validateSchema(
+      QueueCraftConfigSchema,
+      config,
+      `Invalid QueueCraft configuration: ${JSON.stringify(config)}`,
+    )
+
     this.logger = config.logger || new ConsoleLogger()
 
     if (!QueueCraft.connectionManager) {
@@ -47,6 +64,13 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
    * @returns Publisher instance
    */
   createPublisher(exchangeName = 'events', options: PublisherOptions = {}): Publisher<T> {
+    // Validate publisher options
+    validateSchema(
+      PublisherOptionsSchema,
+      options,
+      `Invalid publisher options: ${JSON.stringify(options)}`,
+    )
+
     const key = `publisher:${exchangeName}`
 
     if (!this.publishers.has(key)) {
@@ -72,6 +96,15 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
    * @returns Worker instance
    */
   createWorker(config: WorkerConfig<T>, exchangeName = 'events'): Worker<T> {
+    // Validate worker config options if present
+    if (config.options) {
+      validateSchema(
+        WorkerOptionsSchema,
+        config.options,
+        `Invalid worker options: ${JSON.stringify(config.options)}`,
+      )
+    }
+
     // Determine events to use for the key based on handlers
     let events: string[] = []
 

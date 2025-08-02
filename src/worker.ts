@@ -6,7 +6,10 @@ import {
   MessageMetadata,
   WorkerConfig,
   RetryOptions,
+  RetryOptionsSchema,
+  WorkerOptionsSchema,
 } from './types'
+import { validateSchema } from './utils/validation'
 
 // Default retry options
 const DEFAULT_RETRY_OPTIONS: RetryOptions = {
@@ -39,14 +42,31 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
     exchangeName = 'events',
   ) {
     this.connectionManager = connectionManager
-    this.config = config
     this.exchangeName = exchangeName
 
-    // Initialize retry options with defaults and any user-provided options
-    this.retryOptions = {
+    // Validate config options if present
+    if (config.options) {
+      validateSchema(
+        WorkerOptionsSchema,
+        config.options,
+        `Invalid worker options: ${JSON.stringify(config.options)}`,
+      )
+    }
+
+    this.config = config
+
+    // Initialize and validate retry options with defaults and any user-provided options
+    const combinedRetryOptions = {
       ...DEFAULT_RETRY_OPTIONS,
       ...config.options?.retry,
     }
+
+    // Validate retry options
+    this.retryOptions = validateSchema(
+      RetryOptionsSchema,
+      combinedRetryOptions,
+      `Invalid retry options: ${JSON.stringify(combinedRetryOptions)}`,
+    )
 
     let events: string[] = []
 
@@ -242,6 +262,10 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
     routingKey: string,
     retryCount: number,
   ): Promise<void> {
+    // Validate retry count
+    if (typeof retryCount !== 'number' || retryCount < 0) {
+      throw new Error(`Invalid retry count: ${retryCount}. Must be a non-negative number.`)
+    }
     const channel = await this.connectionManager.getChannel()
     const headers = { ...msg.properties.headers, 'x-retry-count': retryCount }
 

@@ -1,77 +1,113 @@
+import { Type, Static } from '@sinclair/typebox'
+
 /**
  * Connection options for RabbitMQ
  */
-export interface ConnectionOptions {
+export const ConnectionOptionsSchema = Type.Object({
   /** RabbitMQ host */
-  host: string
+  host: Type.String(),
   /** RabbitMQ port */
-  port: number
+  port: Type.Number(),
   /** RabbitMQ username */
-  username: string
+  username: Type.String(),
   /** RabbitMQ password */
-  password: string
+  password: Type.String(),
   /** RabbitMQ virtual host */
-  vhost?: string
+  vhost: Type.Optional(Type.String()),
   /** Connection timeout in milliseconds */
-  timeout?: number
+  timeout: Type.Optional(Type.Number()),
   /** Heartbeat interval in seconds */
-  heartbeat?: number
-}
+  heartbeat: Type.Optional(Type.Number()),
+})
+
+export type ConnectionOptions = Static<typeof ConnectionOptionsSchema>
 
 /**
  * Exchange options
  */
-export interface ExchangeOptions {
+export const ExchangeOptionsSchema = Type.Object({
   /** Exchange name */
-  name: string
+  name: Type.String(),
   /** Exchange type (default: 'topic') */
-  type?: 'direct' | 'topic' | 'fanout' | 'headers'
+  type: Type.Optional(
+    Type.Union([
+      Type.Literal('direct'),
+      Type.Literal('topic'),
+      Type.Literal('fanout'),
+      Type.Literal('headers'),
+    ]),
+  ),
   /** Whether the exchange should survive broker restarts (default: true) */
-  durable?: boolean
+  durable: Type.Optional(Type.Boolean()),
   /** Whether the exchange should be deleted when the last queue is unbound from it (default: false) */
-  autoDelete?: boolean
+  autoDelete: Type.Optional(Type.Boolean()),
   /** Additional exchange arguments */
-  arguments?: Record<string, any>
-}
+  arguments: Type.Optional(Type.Record(Type.String(), Type.Any())),
+})
+
+export type ExchangeOptions = Static<typeof ExchangeOptionsSchema>
 
 /**
  * Queue options
  */
-export interface QueueOptions {
+export const QueueOptionsSchema = Type.Object({
   /** Queue name */
-  name: string
+  name: Type.String(),
   /** Whether the queue should survive broker restarts (default: true) */
-  durable?: boolean
+  durable: Type.Optional(Type.Boolean()),
   /** Whether the queue should be deleted when the last consumer unsubscribes (default: false) */
-  autoDelete?: boolean
+  autoDelete: Type.Optional(Type.Boolean()),
   /** Whether the queue should be used only by one connection (default: false) */
-  exclusive?: boolean
+  exclusive: Type.Optional(Type.Boolean()),
   /** Additional queue arguments */
-  arguments?: Record<string, any>
-}
+  arguments: Type.Optional(Type.Record(Type.String(), Type.Any())),
+})
+
+export type QueueOptions = Static<typeof QueueOptionsSchema>
 
 /**
  * Retry options for message processing
  */
-export interface RetryOptions {
+export const RetryOptionsSchema = Type.Object({
   /** Maximum number of retry attempts */
-  maxRetries: number
+  maxRetries: Type.Number(),
   /** Initial delay in milliseconds before retrying */
-  initialDelay: number
+  initialDelay: Type.Number(),
   /** Factor to multiply delay by for each subsequent retry */
-  backoffFactor: number
+  backoffFactor: Type.Number(),
   /** Maximum delay in milliseconds */
-  maxDelay: number
-}
+  maxDelay: Type.Number(),
+})
+
+export type RetryOptions = Static<typeof RetryOptionsSchema>
 
 /**
  * Error handling action to take after an error occurs
  */
-export type ErrorAction = 'ack' | 'nack' | 'retry' | 'dead-letter'
+export const ErrorActionSchema = Type.Union([
+  Type.Literal('ack'),
+  Type.Literal('nack'),
+  Type.Literal('retry'),
+  Type.Literal('dead-letter'),
+])
+
+export type ErrorAction = Static<typeof ErrorActionSchema>
 
 /**
  * Worker configuration
  */
+export const WorkerOptionsSchema = Type.Object({
+  /** Number of messages to prefetch (default: 1) */
+  prefetch: Type.Optional(Type.Number()),
+  /** Queue options */
+  queue: Type.Optional(Type.Omit(QueueOptionsSchema, ['name'])),
+  /** Exchange options */
+  exchange: Type.Optional(Type.Omit(ExchangeOptionsSchema, ['name'])),
+  /** Retry options for failed message processing */
+  retry: Type.Optional(RetryOptionsSchema),
+})
+
+// Note: EventHandlerMap contains functions which can't be validated with TypeBox at runtime
 export interface WorkerConfig<T extends Record<string, any> = EventPayloadMap> {
   /**
    * Worker handlers - must be an object with event-specific handlers
@@ -81,33 +117,26 @@ export interface WorkerConfig<T extends Record<string, any> = EventPayloadMap> {
    */
   handlers?: EventHandlerMap<T>
   /** Worker options */
-  options?: {
-    /** Number of messages to prefetch (default: 1) */
-    prefetch?: number
-    /** Queue options */
-    queue?: Omit<QueueOptions, 'name'>
-    /** Exchange options */
-    exchange?: Omit<ExchangeOptions, 'name'>
-    /** Retry options for failed message processing */
-    retry?: RetryOptions
-  }
+  options?: Static<typeof WorkerOptionsSchema>
 }
 
 /**
  * Publisher options
  */
-export interface PublisherOptions {
+export const PublisherOptionsSchema = Type.Object({
   /** Exchange options */
-  exchange?: Omit<ExchangeOptions, 'name'>
-}
+  exchange: Type.Optional(Type.Omit(ExchangeOptionsSchema, ['name'])),
+})
+
+export type PublisherOptions = Static<typeof PublisherOptionsSchema>
 
 /**
  * Event payload map interface
  * This should be extended by users to define their own event types
  */
-export interface EventPayloadMap {
-  [eventName: string]: any
-}
+export const EventPayloadMapSchema = Type.Record(Type.String(), Type.Any())
+
+export type EventPayloadMap = Static<typeof EventPayloadMapSchema>
 
 /**
  * Worker handler function type for a single event
@@ -132,25 +161,28 @@ export type HandlerType<T extends Record<string, any> = EventPayloadMap> = Event
 /**
  * Message metadata
  */
+export const MessagePropertiesSchema = Type.Object({
+  /** Message ID */
+  messageId: Type.Optional(Type.String()),
+  /** Timestamp */
+  timestamp: Type.Optional(Type.Number()),
+  /** Headers */
+  headers: Type.Optional(Type.Record(Type.String(), Type.Any())),
+})
+
+export const MessageFieldsSchema = Type.Object({
+  /** Routing key */
+  routingKey: Type.String(),
+  /** Exchange */
+  exchange: Type.String(),
+})
+
+// Note: Functions can't be validated with TypeBox at runtime, so we keep them as TypeScript types
 export interface MessageMetadata {
   /** Message properties */
-  properties: {
-    /** Message ID */
-    messageId?: string
-    /** Timestamp */
-    timestamp?: number
-    /** Headers */
-    headers?: Record<string, any>
-    [key: string]: any
-  }
+  properties: Static<typeof MessagePropertiesSchema> & Record<string, any>
   /** Message routing fields */
-  fields?: {
-    /** Routing key */
-    routingKey: string
-    /** Exchange */
-    exchange: string
-    [key: string]: any
-  }
+  fields?: Static<typeof MessageFieldsSchema> & Record<string, any>
   /** Negative acknowledge function - rejects the message without requeuing */
   nack: () => void
   /** Requeue function - puts the message back in the queue */
@@ -162,12 +194,16 @@ export interface MessageMetadata {
 /**
  * QueueCraft configuration
  */
-export interface QueueCraftConfig {
+export const QueueCraftConfigSchema = Type.Object({
   /** Connection options */
-  connection: ConnectionOptions
+  connection: ConnectionOptionsSchema,
   /** Default exchange options */
-  defaultExchange?: Omit<ExchangeOptions, 'name'>
-  /** Logger instance */
+  defaultExchange: Type.Optional(Type.Omit(ExchangeOptionsSchema, ['name'])),
+  /** Logger instance - can't be validated with TypeBox */
+  logger: Type.Optional(Type.Any()),
+})
+
+export type QueueCraftConfig = Static<typeof QueueCraftConfigSchema> & {
   logger?: Logger
 }
 

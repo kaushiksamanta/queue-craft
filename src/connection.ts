@@ -1,6 +1,15 @@
 import { Connection, Channel, connect, Replies } from 'amqplib'
-import { ConnectionOptions, ExchangeOptions, QueueOptions, Logger } from './types'
+import {
+  ConnectionOptions,
+  ExchangeOptions,
+  QueueOptions,
+  Logger,
+  ConnectionOptionsSchema,
+  ExchangeOptionsSchema,
+  QueueOptionsSchema,
+} from './types'
 import { ConsoleLogger } from './logger'
+import { validateSchema } from './utils/validation'
 
 /**
  * Connection manager for RabbitMQ
@@ -29,6 +38,13 @@ export class ConnectionManager {
     },
     logger?: Logger,
   ) {
+    // Validate connection options at runtime using TypeBox
+    validateSchema(
+      ConnectionOptionsSchema,
+      options,
+      `Invalid connection options: ${JSON.stringify(options)}`,
+    )
+
     this.options = options
     this.defaultExchangeOptions = defaultExchangeOptions
     this.logger = logger || new ConsoleLogger()
@@ -141,6 +157,14 @@ export class ConnectionManager {
       return { exchange: name }
     }
 
+    // Validate exchange options with name added
+    const fullOptions = { name, ...options }
+    validateSchema(
+      ExchangeOptionsSchema,
+      fullOptions,
+      `Invalid exchange options: ${JSON.stringify(fullOptions)}`,
+    )
+
     const { type = 'topic', durable = true, autoDelete = false, arguments: args } = options
 
     const result = await channel.assertExchange(name, type, {
@@ -169,6 +193,14 @@ export class ConnectionManager {
     if (this.setupQueues.has(name)) {
       return { queue: name, messageCount: 0, consumerCount: 0 }
     }
+
+    // Validate queue options with name added
+    const fullOptions = { name, ...options }
+    validateSchema(
+      QueueOptionsSchema,
+      fullOptions,
+      `Invalid queue options: ${JSON.stringify(fullOptions)}`,
+    )
 
     const { durable = true, autoDelete = false, exclusive = false, arguments: args } = options
 

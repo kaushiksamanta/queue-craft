@@ -1,5 +1,6 @@
 import { ConnectionManager } from './connection'
-import { EventPayloadMap, PublisherOptions } from './types'
+import { EventPayloadMap, PublisherOptions, PublisherOptionsSchema } from './types'
+import { validateSchema } from './utils/validation'
 
 /**
  * Publisher class for publishing events to RabbitMQ
@@ -22,7 +23,13 @@ export class Publisher<T extends EventPayloadMap = EventPayloadMap> {
   ) {
     this.connectionManager = connectionManager
     this.exchangeName = exchangeName
-    this.options = options
+
+    // Validate publisher options
+    this.options = validateSchema(
+      PublisherOptionsSchema,
+      options,
+      `Invalid publisher options: ${JSON.stringify(options)}`,
+    )
   }
 
   /**
@@ -53,6 +60,12 @@ export class Publisher<T extends EventPayloadMap = EventPayloadMap> {
       persistent?: boolean
     } = {},
   ): Promise<boolean> {
+    // Validate that the event is a string
+    if (typeof event !== 'string' && typeof event !== 'number' && typeof event !== 'symbol') {
+      throw new Error(
+        `Invalid event type: ${typeof event}. Event must be a string, number, or symbol.`,
+      )
+    }
     await this.initialize()
 
     const channel = await this.connectionManager.getChannel()
