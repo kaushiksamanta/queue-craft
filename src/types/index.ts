@@ -116,6 +116,12 @@ export interface WorkerConfig<T extends Record<string, any> = EventPayloadMap> {
    * will be sent to the dead letter queue.
    */
   handlers?: EventHandlerMap<T>
+  /**
+   * Queue name for this worker. This is required and should be a stable name
+   * that doesn't change when handlers are added or removed.
+   * Example: 'user-service' or 'order-worker'
+   */
+  queueName: string
   /** Worker options */
   options?: Static<typeof WorkerOptionsSchema>
 }
