@@ -3,11 +3,11 @@
  */
 
 export * from './types'
-export { ConnectionManager } from './connection'
+export { ConnectionManager, ReconnectionOptions, ConnectionStatus } from './connection'
 export { Publisher, createPublisher } from './publisher'
 export { Worker, createWorker } from './worker'
 
-import { ConnectionManager } from './connection'
+import { ConnectionManager, ReconnectionOptions, ConnectionStatus } from './connection'
 import { Publisher, createPublisher } from './publisher'
 import { Worker, createWorker } from './worker'
 import {
@@ -24,6 +24,31 @@ import { ConsoleLogger } from './logger'
 import { validateSchema } from './utils/validation'
 
 /**
+ * Graceful shutdown options
+ */
+export interface GracefulShutdownOptions {
+  /** Timeout in milliseconds to wait for graceful shutdown (default: 30000) */
+  timeout?: number
+  /** Signals to listen for (default: ['SIGTERM', 'SIGINT']) */
+  signals?: NodeJS.Signals[]
+  /** Callback to run before shutdown starts */
+  beforeShutdown?: () => Promise<void> | void
+  /** Callback to run after shutdown completes */
+  afterShutdown?: () => Promise<void> | void
+}
+
+/**
+ * Health check result
+ */
+export interface HealthCheckResult {
+  healthy: boolean
+  connection: ConnectionStatus
+  publishers: number
+  workers: number
+  timestamp: Date
+}
+
+/**
  * QueueCraft - Main class for managing RabbitMQ connections, publishers, and workers
  */
 export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
@@ -31,12 +56,15 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
   private readonly publishers: Map<string, Publisher<T>> = new Map()
   private readonly workers: Map<string, Worker<T>> = new Map()
   private readonly logger: Logger
+  private shutdownInProgress = false
+  private shutdownHandlersRegistered = false
+  private boundShutdownHandler?: () => Promise<void>
 
   /**
    * Creates a new QueueCraft instance
    * @param config QueueCraft configuration
    */
-  constructor(config: QueueCraftConfig) {
+  constructor(config: QueueCraftConfig & { reconnection?: ReconnectionOptions }) {
     // Validate QueueCraft configuration
     validateSchema(
       QueueCraftConfigSchema,
@@ -51,6 +79,7 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
         config.connection,
         config.defaultExchange,
         this.logger,
+        config.reconnection,
       )
     }
 
@@ -155,6 +184,146 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
   ): Promise<boolean> {
     const publisher = this.createPublisher(exchangeName)
     return publisher.publish(event, payload, options)
+  }
+
+  /**
+   * Publishes an event with broker confirmation
+   * @param event Event name
+   * @param payload Event payload
+   * @param options Publish options including timeout
+   * @param exchangeName Exchange name
+   * @returns Promise that resolves when the broker confirms receipt
+   */
+  async publishEventWithConfirm<E extends keyof T>(
+    event: E,
+    payload: T[E],
+    options: {
+      headers?: Record<string, any>
+      messageId?: string
+      timestamp?: number
+      contentType?: string
+      contentEncoding?: string
+      persistent?: boolean
+      timeout?: number
+    } = {},
+    exchangeName = 'events',
+  ): Promise<void> {
+    const publisher = this.createPublisher(exchangeName)
+    return publisher.publishWithConfirm(event, payload, options)
+  }
+
+  /**
+   * Gets the health status of the QueueCraft instance
+   * @returns HealthCheckResult with connection and component status
+   */
+  getHealth(): HealthCheckResult {
+    const connectionStatus = QueueCraft.connectionManager.getStatus()
+    return {
+      healthy: connectionStatus.connected && !this.shutdownInProgress,
+      connection: connectionStatus,
+      publishers: this.publishers.size,
+      workers: this.workers.size,
+      timestamp: new Date(),
+    }
+  }
+
+  /**
+   * Checks if the QueueCraft instance is healthy
+   * @returns true if connected and not shutting down
+   */
+  isHealthy(): boolean {
+    return QueueCraft.connectionManager.isHealthy() && !this.shutdownInProgress
+  }
+
+  /**
+   * Gets the underlying connection manager for advanced use cases
+   * @returns ConnectionManager instance
+   */
+  getConnectionManager(): ConnectionManager {
+    return QueueCraft.connectionManager
+  }
+
+  /**
+   * Enables graceful shutdown handling for SIGTERM and SIGINT signals
+   * @param options Graceful shutdown options
+   */
+  enableGracefulShutdown(options: GracefulShutdownOptions = {}): void {
+    if (this.shutdownHandlersRegistered) {
+      this.logger.warn('Graceful shutdown handlers already registered')
+      return
+    }
+
+    const {
+      timeout = 30000,
+      signals = ['SIGTERM', 'SIGINT'],
+      beforeShutdown,
+      afterShutdown,
+    } = options
+
+    this.boundShutdownHandler = async () => {
+      if (this.shutdownInProgress) {
+        this.logger.warn('Shutdown already in progress')
+        return
+      }
+
+      this.shutdownInProgress = true
+      this.logger.info('Graceful shutdown initiated')
+
+      try {
+        // Run before shutdown callback
+        if (beforeShutdown) {
+          await beforeShutdown()
+        }
+
+        // Create a timeout promise
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => {
+            reject(new Error(`Graceful shutdown timed out after ${timeout}ms`))
+          }, timeout)
+        })
+
+        // Race between close and timeout
+        await Promise.race([this.close(), timeoutPromise])
+
+        this.logger.info('Graceful shutdown completed successfully')
+
+        // Run after shutdown callback
+        if (afterShutdown) {
+          await afterShutdown()
+        }
+
+        process.exit(0)
+      } catch (error) {
+        this.logger.error('Error during graceful shutdown:', error)
+        process.exit(1)
+      }
+    }
+
+    // Register signal handlers
+    for (const signal of signals) {
+      process.on(signal, this.boundShutdownHandler)
+    }
+
+    this.shutdownHandlersRegistered = true
+    this.logger.info(`Graceful shutdown handlers registered for signals: ${signals.join(', ')}`)
+  }
+
+  /**
+   * Disables graceful shutdown handling
+   */
+  disableGracefulShutdown(): void {
+    if (!this.shutdownHandlersRegistered || !this.boundShutdownHandler) {
+      return
+    }
+
+    const signals: NodeJS.Signals[] = ['SIGTERM', 'SIGINT']
+    for (const signal of signals) {
+      process.removeListener(signal, this.boundShutdownHandler)
+    }
+
+    this.shutdownHandlersRegistered = false
+    this.boundShutdownHandler = undefined
+    this.logger.info('Graceful shutdown handlers removed')
   }
 
   /**

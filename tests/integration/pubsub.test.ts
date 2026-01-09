@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest'
 import { QueueCraft } from '../../src/index'
 import { MessageMetadata } from '../../src/types'
 import {
@@ -125,6 +125,7 @@ describe('Integration: Publisher and Worker', () => {
       // Create a worker with a handler for the user.created event
       worker = queueCraft.createWorker(
         {
+          queueName: `test-user-created-${Date.now()}`,
           handlers: {
             'user.created': async (payload: UserCreatedPayload, metadata: MessageMetadata) => {
               messageCount++
@@ -179,8 +180,9 @@ describe('Integration: Publisher and Worker', () => {
       // Create a worker with handlers for multiple event types
       worker = queueCraft.createWorker(
         {
+          queueName: `test-multiple-events-${Date.now()}`,
           handlers: {
-            'user.created': async (payload: UserCreatedPayload, metadata: MessageMetadata) => {
+            'user.created': async (payload: UserCreatedPayload, _metadata: MessageMetadata) => {
               messageCount++
 
               // Verify payload data
@@ -190,7 +192,7 @@ describe('Integration: Publisher and Worker', () => {
               // Resolve the promise to signal message was processed
               resolve()
             },
-            'order.placed': async (payload: OrderPlacedPayload, metadata: MessageMetadata) => {
+            'order.placed': async (payload: OrderPlacedPayload, _metadata: MessageMetadata) => {
               messageCount++
 
               // Verify payload data
@@ -251,6 +253,7 @@ describe('Integration: Publisher and Worker', () => {
       // Create a worker with a handler that throws an error
       worker = queueCraft.createWorker(
         {
+          queueName: `test-error-retry-${Date.now()}`,
           handlers: {
             'error.test': async (payload: ErrorTestPayload, _metadata: MessageMetadata) => {
               messageCount++
@@ -314,6 +317,7 @@ describe('Integration: Publisher and Worker', () => {
       // Create a worker with a handler that throws an error on first attempt
       worker = queueCraft.createWorker(
         {
+          queueName: `test-auto-retry-${Date.now()}`,
           handlers: {
             [uniqueEventName]: async (payload: RetryTestPayload, metadata: MessageMetadata) => {
               messageCount++
@@ -371,8 +375,6 @@ describe('Integration: Publisher and Worker', () => {
   it('should support manual acknowledgment without returning early', async () => {
     // Create flags to track what happened during message processing
     let nackCalled = false
-    let requeueCalled = false
-    let deadLetterCalled = false
     let codeAfterManualAckExecuted = false
 
     // Create a unique event name for this test to avoid conflicts with other tests
@@ -383,6 +385,7 @@ describe('Integration: Publisher and Worker', () => {
       // Create a worker with handlers that use manual acknowledgment
       worker = queueCraft.createWorker(
         {
+          queueName: `test-manual-ack-${Date.now()}`,
           handlers: {
             // Use the unique event name - this will determine the queue name
             [uniqueEventName]: async (payload: any, metadata: MessageMetadata) => {
@@ -392,22 +395,6 @@ describe('Integration: Publisher and Worker', () => {
                 // Use nack without return
                 metadata.nack()
                 nackCalled = true
-
-                // This code should still execute (with the fixed implementation)
-                codeAfterManualAckExecuted = true
-                resolve()
-              } else if (payload.email === 'requeue@example.com') {
-                // Use requeue without return
-                metadata.requeue()
-                requeueCalled = true
-
-                // This code should still execute (with the fixed implementation)
-                codeAfterManualAckExecuted = true
-                resolve()
-              } else if (payload.email === 'deadletter@example.com' && metadata.deadLetter) {
-                // Use deadLetter without return
-                await metadata.deadLetter()
-                deadLetterCalled = true
 
                 // This code should still execute (with the fixed implementation)
                 codeAfterManualAckExecuted = true

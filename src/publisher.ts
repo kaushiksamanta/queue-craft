@@ -92,6 +92,79 @@ export class Publisher<T extends EventPayloadMap = EventPayloadMap> {
   }
 
   /**
+   * Publishes an event with confirmation from the broker
+   * This ensures the message was received by RabbitMQ before resolving
+   * @param event Event name
+   * @param payload Event payload
+   * @param options Publish options
+   * @returns Promise that resolves when the broker confirms receipt
+   * @throws Error if the broker rejects the message or times out
+   */
+  async publishWithConfirm<E extends keyof T>(
+    event: E,
+    payload: T[E],
+    options: {
+      headers?: Record<string, any>
+      messageId?: string
+      timestamp?: number
+      contentType?: string
+      contentEncoding?: string
+      persistent?: boolean
+      timeout?: number
+    } = {},
+  ): Promise<void> {
+    if (typeof event !== 'string' && typeof event !== 'number' && typeof event !== 'symbol') {
+      throw new Error(
+        `Invalid event type: ${typeof event}. Event must be a string, number, or symbol.`,
+      )
+    }
+
+    await this.initialize()
+
+    const confirmChannel = await this.connectionManager.getConfirmChannel()
+    const eventName = String(event)
+    const content = Buffer.from(JSON.stringify(payload))
+
+    const {
+      headers,
+      messageId,
+      timestamp = Date.now(),
+      contentType = 'application/json',
+      contentEncoding = 'utf-8',
+      persistent = true,
+      timeout = 5000,
+    } = options
+
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        reject(new Error(`Publisher confirm timeout after ${timeout}ms for event: ${eventName}`))
+      }, timeout)
+
+      confirmChannel.publish(
+        this.exchangeName,
+        eventName,
+        content,
+        {
+          contentType,
+          contentEncoding,
+          headers,
+          messageId,
+          timestamp,
+          persistent,
+        },
+        err => {
+          clearTimeout(timeoutId)
+          if (err) {
+            reject(new Error(`Publisher confirm failed for event ${eventName}: ${err.message}`))
+          } else {
+            resolve()
+          }
+        },
+      )
+    })
+  }
+
+  /**
    * Closes the publisher
    * @returns Promise that resolves when the publisher is closed
    */

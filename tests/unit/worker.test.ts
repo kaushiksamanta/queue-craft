@@ -460,7 +460,6 @@ describe('Worker', () => {
         new Worker(connectionManager, config, 'test-exchange', silentLogger)
       }).toThrow(/exceeds RabbitMQ limit of 255 characters/)
     })
-
   })
 
   describe('Dynamic Handler Registration', () => {

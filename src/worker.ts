@@ -34,7 +34,7 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
   private consumerTag: string | null = null
   private retryOptions: RetryOptions
   private logger: Logger
-  private isConsuming: boolean = false
+  private isConsuming = false
   private boundEvents: Set<string> = new Set()
 
   /**
@@ -130,7 +130,7 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
     }
 
     // Add handler to the map
-    ;(this.config.handlers as EventHandlerMap<T>)[event] = handler
+    (this.config.handlers as EventHandlerMap<T>)[event] = handler
 
     // If already consuming, bind the new event to the queue
     if (this.isConsuming && !this.boundEvents.has(event)) {
@@ -367,7 +367,9 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
           })
         } else {
           // Fallback for tests
-          this.logger.debug(`Would send message to delay queue ${delayQueueName} with delay ${delay}ms`)
+          this.logger.debug(
+            `Would send message to delay queue ${delayQueueName} with delay ${delay}ms`,
+          )
         }
       } else if (typeof channel.publish === 'function') {
         // Otherwise publish directly back to the main exchange if publish method exists
@@ -378,7 +380,9 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
         // Fallback for tests or when publish is not available
         this.logger.warn('Channel publish method not available - this is expected in tests')
         // In tests, we can just log the retry attempt
-        this.logger.debug(`Would retry message with routing key ${routingKey} (attempt ${retryCount})`)
+        this.logger.debug(
+          `Would retry message with routing key ${routingKey} (attempt ${retryCount})`,
+        )
       }
     } catch (error: any) {
       // Log the error but don't fail - this allows tests to continue
