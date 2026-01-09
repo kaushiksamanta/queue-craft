@@ -10,6 +10,8 @@ Complete API reference and usage examples for QueueCraft.
 - [Publisher API](#publisher-api)
 - [Worker API](#worker-api)
 - [Error Handling](#error-handling)
+- [Health Checks](#health-checks)
+- [Graceful Shutdown](#graceful-shutdown)
 - [Advanced Usage](#advanced-usage)
 
 ---
@@ -125,6 +127,13 @@ const queueCraft = new QueueCraft<MyEvents>({
     durable: true,
     autoDelete: false,
   },
+  reconnection: {            // Optional - auto-reconnect settings
+    autoReconnect: true,     // Enable auto-reconnect (default: true)
+    maxAttempts: 10,         // Max reconnection attempts (default: 10)
+    initialDelay: 1000,      // Initial delay ms (default: 1000)
+    maxDelay: 30000,         // Max delay ms (default: 30000)
+    backoffFactor: 2,        // Exponential backoff (default: 2)
+  },
 });
 ```
 
@@ -177,7 +186,7 @@ const publisher = queueCraft.createPublisher('exchange-name', {
 ### Publishing Events
 
 ```typescript
-// Basic publish
+// Basic publish (fire-and-forget)
 await publisher.publish('user.created', { id: '123', name: 'John' });
 
 // With options
@@ -187,6 +196,11 @@ await publisher.publish('user.created', payload, {
   headers: {
     'x-trace-id': 'abc123',
   },
+});
+
+// With broker confirmation (guaranteed delivery)
+await publisher.publishWithConfirm('user.created', payload, {
+  timeout: 5000,  // Optional timeout in ms (default: 5000)
 });
 ```
 
@@ -316,6 +330,108 @@ const dlqWorker = queueCraft.createWorker({
 
 ---
 
+## Health Checks
+
+Monitor connection status for load balancers and health endpoints:
+
+```typescript
+// Simple boolean check
+if (queueCraft.isHealthy()) {
+  // Ready to process messages
+}
+
+// Detailed health status
+const health = queueCraft.getHealth();
+console.log(health);
+// {
+//   healthy: true,
+//   connection: {
+//     connected: true,
+//     reconnecting: false,
+//     reconnectAttempts: 0,
+//     lastConnectedAt: Date,
+//     lastDisconnectedAt: Date,
+//     lastError: Error | undefined
+//   },
+//   publishers: 2,
+//   workers: 3,
+//   timestamp: Date
+// }
+
+// Express health endpoint example
+app.get('/health', (req, res) => {
+  const health = queueCraft.getHealth();
+  res.status(health.healthy ? 200 : 503).json(health);
+});
+```
+
+### Connection Events
+
+Listen to connection events for monitoring:
+
+```typescript
+const connectionManager = queueCraft.getConnectionManager();
+
+connectionManager.on('connected', ({ timestamp }) => {
+  console.log('Connected to RabbitMQ at', timestamp);
+});
+
+connectionManager.on('disconnected', ({ error, timestamp }) => {
+  console.log('Disconnected from RabbitMQ:', error?.message);
+});
+
+connectionManager.on('reconnecting', ({ attempt, maxAttempts, delay }) => {
+  console.log(`Reconnecting... attempt ${attempt}/${maxAttempts} in ${delay}ms`);
+});
+
+connectionManager.on('reconnected', ({ attempts }) => {
+  console.log('Reconnected after', attempts, 'attempts');
+});
+
+connectionManager.on('reconnectFailed', ({ attempts, lastError }) => {
+  console.error('Failed to reconnect after', attempts, 'attempts:', lastError);
+});
+```
+
+---
+
+## Graceful Shutdown
+
+### Built-in Signal Handling
+
+Enable automatic graceful shutdown on SIGTERM/SIGINT:
+
+```typescript
+queueCraft.enableGracefulShutdown({
+  timeout: 30000,              // Max time to wait for shutdown (default: 30000)
+  signals: ['SIGTERM', 'SIGINT'],  // Signals to handle (default)
+  beforeShutdown: async () => {
+    console.log('Preparing to shut down...');
+    // Finish in-flight requests, flush logs, etc.
+  },
+  afterShutdown: async () => {
+    console.log('Shutdown complete');
+    // Final cleanup
+  },
+});
+
+// Disable if needed
+queueCraft.disableGracefulShutdown();
+```
+
+### Manual Shutdown
+
+```typescript
+// In your signal handler
+process.on('SIGTERM', async () => {
+  console.log('Shutting down...');
+  await queueCraft.close();  // Stops workers, closes connections
+  process.exit(0);
+});
+```
+
+---
+
 ## Advanced Usage
 
 ### Multiple Workers
@@ -323,7 +439,7 @@ const dlqWorker = queueCraft.createWorker({
 ```typescript
 // User service worker
 const userWorker = queueCraft.createWorker({
-  serviceName: 'user-service',
+  queueName: 'user-service',
   handlers: {
     'user.created': handleUserCreated,
     'user.updated': handleUserUpdated,
@@ -332,7 +448,7 @@ const userWorker = queueCraft.createWorker({
 
 // Order service worker
 const orderWorker = queueCraft.createWorker({
-  serviceName: 'order-service',
+  queueName: 'order-service',
   handlers: {
     'order.placed': handleOrderPlaced,
     'order.shipped': handleOrderShipped,
@@ -348,7 +464,9 @@ await Promise.all([
 ### Environment Variables
 
 ```typescript
-const queueCraft = QueueCraft.createFromEnv<MyEvents>();
+import { createFromEnv } from 'queue-craft';
+
+const queueCraft = createFromEnv<MyEvents>();
 ```
 
 Required environment variables:
@@ -364,13 +482,12 @@ Required environment variables:
 import { WinstonLogger } from 'queue-craft';
 import winston from 'winston';
 
-const logger = new WinstonLogger(
-  winston.createLogger({
-    level: 'info',
-    format: winston.format.json(),
-    transports: [new winston.transports.Console()],
-  })
-);
+const logger = new WinstonLogger({
+  level: 'info',
+  colorize: true,
+  timestamp: true,
+  silent: false,  // Set to true for testing
+});
 
 const queueCraft = new QueueCraft<MyEvents>({
   connection: { /* ... */ },
@@ -399,5 +516,7 @@ handlers: {
 2. **Handle errors appropriately** - Throw for retryable errors, use `deadLetter()` for permanent failures
 3. **Set appropriate prefetch** - Higher for fast handlers, lower for slow ones
 4. **Use structured logging** - Include message IDs and trace context
-5. **Graceful shutdown** - Always call `close()` on SIGINT/SIGTERM
-6. **Monitor DLQ** - Set up alerts for dead letter queue growth
+5. **Enable graceful shutdown** - Use `enableGracefulShutdown()` for clean termination
+6. **Monitor health** - Expose `getHealth()` endpoint for load balancers
+7. **Use publisher confirms** - Use `publishWithConfirm()` for critical messages
+8. **Monitor DLQ** - Set up alerts for dead letter queue growth

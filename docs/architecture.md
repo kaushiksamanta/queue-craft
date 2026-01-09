@@ -243,6 +243,81 @@ With default config: `maxRetries=3, initialDelay=100ms, backoffFactor=2`
 
 ## Connection Architecture
 
+### Connection Reconnection
+
+QueueCraft automatically handles connection failures with exponential backoff:
+
+```mermaid
+sequenceDiagram
+    participant App as Application
+    participant CM as ConnectionManager
+    participant RMQ as RabbitMQ
+
+    App->>CM: connect()
+    CM->>RMQ: TCP Connection
+    RMQ-->>CM: Connected ✓
+    CM-->>App: emit('connected')
+
+    Note over CM,RMQ: Connection Lost
+    RMQ--xCM: Connection Error
+    CM-->>App: emit('disconnected')
+
+    loop Reconnection Attempts
+        CM->>CM: Wait (exponential backoff)
+        CM-->>App: emit('reconnecting', { attempt })
+        CM->>RMQ: Reconnect
+        alt Success
+            RMQ-->>CM: Connected ✓
+            CM-->>App: emit('reconnected')
+        else Failure
+            RMQ--xCM: Error
+            CM->>CM: Increment attempt
+        end
+    end
+
+    alt Max Attempts Exceeded
+        CM-->>App: emit('reconnectFailed')
+    end
+```
+
+**Reconnection Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `autoReconnect` | `true` | Enable automatic reconnection |
+| `maxAttempts` | `10` | Maximum reconnection attempts |
+| `initialDelay` | `1000ms` | Initial delay before first retry |
+| `maxDelay` | `30000ms` | Maximum delay between retries |
+| `backoffFactor` | `2` | Exponential backoff multiplier |
+
+### Health Checks
+
+QueueCraft provides health check methods for monitoring:
+
+```typescript
+// Simple boolean check
+if (queueCraft.isHealthy()) {
+  // Ready to process
+}
+
+// Detailed health status
+const health = queueCraft.getHealth();
+// {
+//   healthy: true,
+//   connection: {
+//     connected: true,
+//     reconnecting: false,
+//     reconnectAttempts: 0,
+//     lastConnectedAt: Date,
+//     lastDisconnectedAt: Date,
+//     lastError: Error | undefined
+//   },
+//   publishers: 2,
+//   workers: 3,
+//   timestamp: Date
+// }
+```
+
 ### QueueCraft Component Structure
 
 ```mermaid
@@ -323,4 +398,46 @@ erDiagram
     
     Worker ||--o| DelayQueue : uses-for-retry
     Worker ||--o| DeadLetterQueue : uses-for-failures
+```
+
+---
+
+## Publisher Confirms
+
+For guaranteed message delivery, use publisher confirms:
+
+```mermaid
+sequenceDiagram
+    participant App as Application
+    participant Pub as Publisher
+    participant Ch as Confirm Channel
+    participant RMQ as RabbitMQ
+
+    App->>Pub: publishWithConfirm('event', payload)
+    Pub->>Ch: publish(exchange, routingKey, content)
+    Ch->>RMQ: Send message
+    
+    alt Broker Confirms
+        RMQ-->>Ch: ACK
+        Ch-->>Pub: Callback(null)
+        Pub-->>App: Promise resolves ✓
+    else Broker Rejects
+        RMQ-->>Ch: NACK
+        Ch-->>Pub: Callback(error)
+        Pub-->>App: Promise rejects ✗
+    else Timeout
+        Pub-->>App: Promise rejects (timeout)
+    end
+```
+
+**Usage:**
+
+```typescript
+// Fire-and-forget (fast, no guarantee)
+await publisher.publish('user.created', payload);
+
+// With confirmation (slower, guaranteed delivery)
+await publisher.publishWithConfirm('user.created', payload, {
+  timeout: 5000  // Optional timeout in ms
+});
 ```
