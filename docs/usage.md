@@ -312,21 +312,29 @@ handlers: {
 
 ### Dead Letter Queue Processing
 
+Create a dedicated worker to process failed messages from the dead letter queue:
+
 ```typescript
 const dlqWorker = queueCraft.createWorker({
   queueName: 'my-queue.dead-letter',
   handlers: {
-    '#': async (payload, metadata) => {
-      const originalKey = metadata.properties.headers['x-original-routing-key'];
-      const error = metadata.properties.headers['x-error'];
-      const failedAt = metadata.properties.headers['x-failed-at'];
+    // Handle specific failed events
+    'user.created': async (payload, metadata) => {
+      const originalKey = metadata.properties.headers?.['x-original-routing-key'];
+      const error = metadata.properties.headers?.['x-error'];
+      const failedAt = metadata.properties.headers?.['x-failed-at'];
       
       console.log(`Failed message: ${originalKey}, Error: ${error}`);
       // Log, alert, or attempt recovery
     },
+    'order.placed': async (payload, metadata) => {
+      // Handle failed order events
+    },
   },
 });
 ```
+
+> **Note:** Messages without a matching handler will remain in the dead letter queue. Ensure you have handlers for all event types that might fail.
 
 ---
 
