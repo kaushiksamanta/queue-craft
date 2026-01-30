@@ -1,15 +1,8 @@
 import winston from 'winston'
+import { Logger } from './types'
 
-/**
- * Logger interface for QueueCraft
- * Provides a consistent logging API regardless of the underlying implementation
- */
-export interface Logger {
-  debug(message: string, ...meta: any[]): void
-  info(message: string, ...meta: any[]): void
-  warn(message: string, ...meta: any[]): void
-  error(message: string, ...meta: any[]): void
-}
+// Re-export Logger from types for backwards compatibility
+export type { Logger } from './types'
 
 /**
  * Winston logger configuration options

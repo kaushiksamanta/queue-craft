@@ -75,6 +75,10 @@ export class ConnectionManager extends EventEmitter {
   private lastConnectedAt?: Date
   private lastDisconnectedAt?: Date
   private reconnectTimer?: NodeJS.Timeout
+  private connectionErrorHandler?: (err: Error) => void
+  private connectionCloseHandler?: () => void
+  private channelErrorHandler?: (err: Error) => void
+  private channelCloseHandler?: () => void
 
   /**
    * Creates a new ConnectionManager instance
@@ -146,18 +150,39 @@ export class ConnectionManager extends EventEmitter {
         })
 
         if (this.connection) {
-          this.connection.on('error', err => {
+          // Store handlers so we can remove them on close
+          this.connectionErrorHandler = (err: Error) => {
             this.logger.error('RabbitMQ connection error:', err)
             this.emit('error', err)
             this.handleConnectionError(err)
-          })
-
-          this.connection.on('close', () => {
+          }
+          
+          this.connectionCloseHandler = () => {
             this.logger.warn('RabbitMQ connection closed')
             this.handleConnectionError()
-          })
+          }
+          
+          this.connection.on('error', this.connectionErrorHandler)
+          this.connection.on('close', this.connectionCloseHandler)
 
           this.channel = await this.connection.createChannel()
+          
+          // Store channel handlers so we can remove them on close
+          this.channelErrorHandler = (err: Error) => {
+            this.logger.error('RabbitMQ channel error:', err)
+            this.emit('error', err)
+          }
+          
+          this.channelCloseHandler = () => {
+            this.logger.warn('RabbitMQ channel closed')
+            this.channel = null
+            // Also invalidate confirm channel as it uses the same connection
+            this.confirmChannel = null
+          }
+          
+          this.channel.on('error', this.channelErrorHandler)
+          this.channel.on('close', this.channelCloseHandler)
+          
           this.lastConnectedAt = new Date()
           this.logger.info('Connected to RabbitMQ')
           this.emit('connected', { timestamp: this.lastConnectedAt })
@@ -226,10 +251,11 @@ export class ConnectionManager extends EventEmitter {
 
       try {
         await this.connect()
+        const totalAttempts = this.reconnectAttempts
         this.isReconnecting = false
         this.reconnectAttempts = 0
         this.logger.info('Successfully reconnected to RabbitMQ')
-        this.emit('reconnected', { attempts: this.reconnectAttempts })
+        this.emit('reconnected', { attempts: totalAttempts })
         return
       } catch (error) {
         this.lastError = error instanceof Error ? error : new Error(String(error))
@@ -425,6 +451,25 @@ export class ConnectionManager extends EventEmitter {
     // Disable auto-reconnect during close
     this.isReconnecting = false
 
+    // Remove event listeners to prevent memory leaks
+    if (this.channel) {
+      if (this.channelErrorHandler) {
+        this.channel.removeListener('error', this.channelErrorHandler)
+      }
+      if (this.channelCloseHandler) {
+        this.channel.removeListener('close', this.channelCloseHandler)
+      }
+    }
+    
+    if (this.connection) {
+      if (this.connectionErrorHandler) {
+        this.connection.removeListener('error', this.connectionErrorHandler)
+      }
+      if (this.connectionCloseHandler) {
+        this.connection.removeListener('close', this.connectionCloseHandler)
+      }
+    }
+
     if (this.confirmChannel) {
       try {
         await this.confirmChannel.close()
@@ -452,7 +497,16 @@ export class ConnectionManager extends EventEmitter {
       this.connection = null
     }
 
+    // Clear handler references
+    this.connectionErrorHandler = undefined
+    this.connectionCloseHandler = undefined
+    this.channelErrorHandler = undefined
+    this.channelCloseHandler = undefined
+
     this.setupExchanges.clear()
     this.setupQueues.clear()
+    
+    // Remove all EventEmitter listeners
+    this.removeAllListeners()
   }
 }

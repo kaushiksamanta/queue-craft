@@ -324,7 +324,7 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
   }
 
   /**
-   * Requeue a message with an updated retry count
+   * Requeue a message with an updated retry count using per-message TTL
    * @private
    */
   private async requeueWithRetryCount(
@@ -346,24 +346,26 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
     )
 
     try {
-      // If delay > 0, publish directly to delay queue logic here
+      // Use a single delay queue with per-message TTL (expiration property)
+      // This avoids the issue of queue properties being immutable
       if (delay > 0) {
         const delayQueueName = `${this.queueName}.delay`
         // Check if assertQueue method exists (it might not in tests)
         if (typeof channel.assertQueue === 'function') {
-          // Ensure delay queue exists
+          // Ensure delay queue exists - NO messageTtl here, we use per-message expiration
           await channel.assertQueue(delayQueueName, {
             durable: true,
             deadLetterExchange: this.exchangeName,
             deadLetterRoutingKey: routingKey,
-            messageTtl: delay,
           })
         }
         // Check if sendToQueue method exists (it might not in tests)
         if (typeof channel.sendToQueue === 'function') {
-          // Publish to delay queue
-          await channel.sendToQueue(delayQueueName, Buffer.from(JSON.stringify(payload)), {
+          // Publish to delay queue with per-message TTL via expiration property
+          channel.sendToQueue(delayQueueName, Buffer.from(JSON.stringify(payload)), {
             headers,
+            expiration: String(delay), // Per-message TTL in milliseconds
+            persistent: true,
           })
         } else {
           // Fallback for tests
@@ -373,8 +375,9 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
         }
       } else if (typeof channel.publish === 'function') {
         // Otherwise publish directly back to the main exchange if publish method exists
-        await channel.publish(this.exchangeName, routingKey, Buffer.from(JSON.stringify(payload)), {
+        channel.publish(this.exchangeName, routingKey, Buffer.from(JSON.stringify(payload)), {
           headers,
+          persistent: true,
         })
       } else {
         // Fallback for tests or when publish is not available
@@ -423,7 +426,7 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
       }
 
       if (typeof channel.publish === 'function') {
-        await channel.publish(
+        channel.publish(
           deadLetterExchange,
           routingKey,
           Buffer.from(JSON.stringify(payload)),
@@ -446,8 +449,6 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
       try {
         const channel = await this.connectionManager.getChannel()
         await channel.cancel(this.consumerTag)
-        this.consumerTag = null
-        this.isConsuming = false
         this.logger.info(`Worker stopped consuming from queue: ${this.queueName}`)
       } catch (error: any) {
         const stopError =
@@ -455,7 +456,10 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
             ? error
             : new Error(error?.message || 'Unknown error stopping worker')
         this.logger.error('Error stopping worker:', stopError)
+      } finally {
+        // Always reset state regardless of success or failure
         this.consumerTag = null
+        this.isConsuming = false
       }
     }
   }

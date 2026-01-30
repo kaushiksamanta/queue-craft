@@ -11,11 +11,14 @@ vi.mock('amqplib', () => {
     bindQueue: vi.fn().mockResolvedValue({}),
     prefetch: vi.fn().mockResolvedValue({}),
     close: vi.fn().mockResolvedValue({}),
+    on: vi.fn(),
+    removeListener: vi.fn(),
   }
 
   const mockConnection = {
     createChannel: vi.fn().mockResolvedValue(mockChannel),
     on: vi.fn(),
+    removeListener: vi.fn(),
     close: vi.fn().mockResolvedValue({}),
   }
 

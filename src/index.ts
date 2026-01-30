@@ -52,13 +52,15 @@ export interface HealthCheckResult {
  * QueueCraft - Main class for managing RabbitMQ connections, publishers, and workers
  */
 export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
-  private static connectionManager: ConnectionManager
+  private readonly connectionManager: ConnectionManager
   private readonly publishers: Map<string, Publisher<T>> = new Map()
   private readonly workers: Map<string, Worker<T>> = new Map()
   private readonly logger: Logger
   private shutdownInProgress = false
   private shutdownHandlersRegistered = false
   private boundShutdownHandler?: () => Promise<void>
+  private registeredSignals: NodeJS.Signals[] = []
+  private isClosed = false
 
   /**
    * Creates a new QueueCraft instance
@@ -74,14 +76,12 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
 
     this.logger = config.logger || new ConsoleLogger()
 
-    if (!QueueCraft.connectionManager) {
-      QueueCraft.connectionManager = new ConnectionManager(
-        config.connection,
-        config.defaultExchange,
-        this.logger,
-        config.reconnection,
-      )
-    }
+    this.connectionManager = new ConnectionManager(
+      config.connection,
+      config.defaultExchange,
+      this.logger,
+      config.reconnection,
+    )
 
     this.logger.debug('QueueCraft instance created')
   }
@@ -93,6 +93,10 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
    * @returns Publisher instance
    */
   createPublisher(exchangeName = 'events', options: PublisherOptions = {}): Publisher<T> {
+    if (this.isClosed) {
+      throw new Error('QueueCraft instance has been closed')
+    }
+    
     // Validate publisher options
     validateSchema(
       PublisherOptionsSchema,
@@ -103,7 +107,7 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
     const key = `publisher:${exchangeName}`
 
     if (!this.publishers.has(key)) {
-      const publisher = createPublisher<T>(QueueCraft.connectionManager, exchangeName, options)
+      const publisher = createPublisher<T>(this.connectionManager, exchangeName, options)
 
       this.publishers.set(key, publisher)
     }
@@ -125,6 +129,10 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
    * @returns Worker instance
    */
   createWorker(config: WorkerConfig<T>, exchangeName = 'events'): Worker<T> {
+    if (this.isClosed) {
+      throw new Error('QueueCraft instance has been closed')
+    }
+    
     // Validate worker config options if present
     if (config.options) {
       validateSchema(
@@ -147,7 +155,7 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
     const key = `worker:${exchangeName}:${events.join('.')}`
 
     if (!this.workers.has(key)) {
-      const worker = createWorker<T>(QueueCraft.connectionManager, config, exchangeName)
+      const worker = createWorker<T>(this.connectionManager, config, exchangeName)
       this.workers.set(key, worker)
     }
 
@@ -217,7 +225,7 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
    * @returns HealthCheckResult with connection and component status
    */
   getHealth(): HealthCheckResult {
-    const connectionStatus = QueueCraft.connectionManager.getStatus()
+    const connectionStatus = this.connectionManager.getStatus()
     return {
       healthy: connectionStatus.connected && !this.shutdownInProgress,
       connection: connectionStatus,
@@ -232,7 +240,7 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
    * @returns true if connected and not shutting down
    */
   isHealthy(): boolean {
-    return QueueCraft.connectionManager.isHealthy() && !this.shutdownInProgress
+    return this.connectionManager.isHealthy() && !this.shutdownInProgress
   }
 
   /**
@@ -240,7 +248,7 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
    * @returns ConnectionManager instance
    */
   getConnectionManager(): ConnectionManager {
-    return QueueCraft.connectionManager
+    return this.connectionManager
   }
 
   /**
@@ -269,6 +277,8 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
       this.shutdownInProgress = true
       this.logger.info('Graceful shutdown initiated')
 
+      let timeoutId: NodeJS.Timeout | undefined
+      
       try {
         // Run before shutdown callback
         if (beforeShutdown) {
@@ -277,13 +287,18 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
 
         // Create a timeout promise
         const timeoutPromise = new Promise<never>((_, reject) => {
-          setTimeout(() => {
+          timeoutId = setTimeout(() => {
             reject(new Error(`Graceful shutdown timed out after ${timeout}ms`))
           }, timeout)
         })
 
         // Race between close and timeout
         await Promise.race([this.close(), timeoutPromise])
+        
+        // Clear timeout on success
+        if (timeoutId) {
+          clearTimeout(timeoutId)
+        }
 
         this.logger.info('Graceful shutdown completed successfully')
 
@@ -294,6 +309,10 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
 
         process.exit(0)
       } catch (error) {
+        // Clear timeout on error too
+        if (timeoutId) {
+          clearTimeout(timeoutId)
+        }
         this.logger.error('Error during graceful shutdown:', error)
         process.exit(1)
       }
@@ -304,6 +323,7 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
       process.on(signal, this.boundShutdownHandler)
     }
 
+    this.registeredSignals = signals
     this.shutdownHandlersRegistered = true
     this.logger.info(`Graceful shutdown handlers registered for signals: ${signals.join(', ')}`)
   }
@@ -316,13 +336,13 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
       return
     }
 
-    const signals: NodeJS.Signals[] = ['SIGTERM', 'SIGINT']
-    for (const signal of signals) {
+    for (const signal of this.registeredSignals) {
       process.removeListener(signal, this.boundShutdownHandler)
     }
 
     this.shutdownHandlersRegistered = false
     this.boundShutdownHandler = undefined
+    this.registeredSignals = []
     this.logger.info('Graceful shutdown handlers removed')
   }
 
@@ -344,12 +364,15 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
     this.logger.debug('All workers stopped')
 
     // Close connection manager
-    await QueueCraft.connectionManager.close()
+    await this.connectionManager.close()
     this.logger.debug('Connection manager closed')
 
     // Clear maps
     this.publishers.clear()
     this.workers.clear()
+    
+    // Mark as closed
+    this.isClosed = true
 
     this.logger.info('QueueCraft instance closed successfully')
   }
