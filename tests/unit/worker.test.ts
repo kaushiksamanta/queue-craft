@@ -2,8 +2,15 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { vi } from 'vitest'
 import { ConnectionManager } from '../../src/connection'
 import { Worker } from '../../src/worker'
-import { WorkerConfig, MessageMetadata } from '../../src/types'
+import { WorkerConfig, MessageMetadata, Logger } from '../../src/types'
 import { ConsumeMessage } from 'amqplib'
+
+const silentLogger: Logger = {
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+}
 
 vi.mock('../../src/connection', () => {
   const mockConsume = vi.fn().mockResolvedValue({ consumerTag: 'test-consumer' })
@@ -153,6 +160,7 @@ describe('Worker', () => {
 
     workerConfig = {
       handlers: specificHandlers,
+      queueName: 'test-worker-queue',
       options: {
         prefetch: 10,
       },
@@ -184,7 +192,7 @@ describe('Worker', () => {
     const consumeMock = channel.consume as unknown as {
       mock: { calls: Array<[string, (msg: TestMessage) => Promise<void>, object]> }
     }
-    expect(consumeMock.mock.calls[0][0]).toBe('queue.user.created.user.updated')
+    expect(consumeMock.mock.calls[0][0]).toBe('test-worker-queue')
     expect(typeof consumeMock.mock.calls[0][1]).toBe('function')
   })
 
@@ -232,7 +240,7 @@ describe('Worker', () => {
   })
 
   it('should handle message with automatic acknowledgment', async () => {
-    worker = new Worker(connectionManager, workerConfig, 'test-exchange')
+    worker = new Worker(connectionManager, workerConfig, 'test-exchange', silentLogger)
 
     await worker.start()
 
@@ -354,7 +362,7 @@ describe('Worker', () => {
 
     expect(specificHandlers['user.created']).toHaveBeenCalled()
     expect(dlqSpy).toHaveBeenCalled()
-    expect(ackSpy).not.toHaveBeenCalled()
+    expect(ackSpy).toHaveBeenCalledWith(message)
 
     dlqSpy.mockRestore()
   })
@@ -402,5 +410,176 @@ describe('Worker', () => {
     expect(ackSpy).toHaveBeenCalledWith(message)
 
     requeueSpy.mockRestore()
+  })
+
+  it('should preserve original routing key for delayed retries', async () => {
+    const channel = await connectionManager.getChannel()
+
+    const message: TestMessage = {
+      content: Buffer.from(JSON.stringify({ id: '123', name: 'John' })),
+      fields: { routingKey: 'user.created' },
+      properties: {
+        headers: {},
+      },
+    }
+
+    await (worker as unknown as WorkerPrivateMethods).requeueWithRetryCount(
+      message as unknown as ConsumeMessage,
+      { id: '123', name: 'John' },
+      'user.created',
+      1,
+    )
+
+    expect(channel.assertExchange).toHaveBeenCalledWith('test-exchange.delay', 'topic', {
+      durable: true,
+    })
+    expect(channel.assertQueue).toHaveBeenCalledWith('test-worker-queue.delay', {
+      durable: true,
+      deadLetterExchange: 'test-exchange',
+    })
+    expect(channel.bindQueue).toHaveBeenCalledWith(
+      'test-worker-queue.delay',
+      'test-exchange.delay',
+      '#',
+    )
+    expect(channel.publish).toHaveBeenCalledWith(
+      'test-exchange.delay',
+      'user.created',
+      expect.any(Buffer),
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'x-retry-count': 1 }),
+        expiration: '100',
+        persistent: true,
+      }),
+    )
+  })
+
+  describe('Queue Naming Strategies', () => {
+    it('should use explicit queueName when provided', () => {
+      const config: WorkerConfig<TestEventPayloadMap> = {
+        handlers: specificHandlers,
+        queueName: 'my-custom-queue',
+      }
+
+      const customWorker = new Worker(connectionManager, config, 'test-exchange', silentLogger)
+      expect(customWorker.getQueueName()).toBe('my-custom-queue')
+    })
+
+    it('should keep same queue name when handlers change', () => {
+      const config1: WorkerConfig<TestEventPayloadMap> = {
+        handlers: {
+          'user.created': specificHandlers['user.created'],
+        },
+        queueName: 'user-service',
+      }
+
+      const config2: WorkerConfig<TestEventPayloadMap> = {
+        handlers: {
+          'user.created': specificHandlers['user.created'],
+          'user.updated': specificHandlers['user.updated'],
+        },
+        queueName: 'user-service',
+      }
+
+      const worker1 = new Worker(connectionManager, config1, 'test-exchange', silentLogger)
+      const worker2 = new Worker(connectionManager, config2, 'test-exchange', silentLogger)
+
+      expect(worker1.getQueueName()).toBe('user-service')
+      expect(worker2.getQueueName()).toBe('user-service')
+    })
+
+    it('should throw error when explicit queueName exceeds 255 characters', () => {
+      const longName = 'a'.repeat(256)
+      const config: WorkerConfig<TestEventPayloadMap> = {
+        handlers: specificHandlers,
+        queueName: longName,
+      }
+
+      expect(() => {
+        new Worker(connectionManager, config, 'test-exchange', silentLogger)
+      }).toThrow(/exceeds RabbitMQ limit of 255 characters/)
+    })
+  })
+
+  describe('Dynamic Handler Registration', () => {
+    it('should add handler before start', async () => {
+      interface ExtendedEventMap extends TestEventPayloadMap {
+        'user.deleted': { id: string }
+      }
+
+      const config: WorkerConfig<ExtendedEventMap> = {
+        handlers: {
+          'user.created': vi.fn().mockResolvedValue(undefined),
+        },
+        queueName: 'test-queue',
+      }
+
+      const customWorker = new Worker<ExtendedEventMap>(
+        connectionManager,
+        config,
+        'test-exchange',
+        silentLogger,
+      )
+
+      const newHandler = vi.fn().mockResolvedValue(undefined)
+      await customWorker.addHandler('user.deleted', newHandler)
+
+      expect(connectionManager.bindQueue).not.toHaveBeenCalledWith(
+        'test-queue',
+        'test-exchange',
+        'user.deleted',
+      )
+
+      await customWorker.close()
+    })
+
+    it('should add and bind handler after start', async () => {
+      interface ExtendedEventMap extends TestEventPayloadMap {
+        'user.deleted': { id: string }
+      }
+
+      const config: WorkerConfig<ExtendedEventMap> = {
+        handlers: {
+          'user.created': vi.fn().mockResolvedValue(undefined),
+        },
+        queueName: 'dynamic-test-queue',
+      }
+
+      const customWorker = new Worker<ExtendedEventMap>(
+        connectionManager,
+        config,
+        'test-exchange',
+        silentLogger,
+      )
+
+      await customWorker.start()
+
+      vi.mocked(connectionManager.bindQueue).mockClear()
+
+      const newHandler = vi.fn().mockResolvedValue(undefined)
+      await customWorker.addHandler('user.deleted', newHandler)
+
+      expect(connectionManager.bindQueue).toHaveBeenCalledWith(
+        'dynamic-test-queue',
+        'test-exchange',
+        'user.deleted',
+      )
+
+      await customWorker.close()
+    })
+
+    it('should remove handler', () => {
+      const config: WorkerConfig<TestEventPayloadMap> = {
+        handlers: specificHandlers,
+        queueName: 'test-queue',
+      }
+
+      const customWorker = new Worker(connectionManager, config, 'test-exchange', silentLogger)
+      customWorker.removeHandler('user.created')
+
+      expect(silentLogger.info).toHaveBeenCalledWith(
+        expect.stringContaining("Removed handler for event 'user.created'"),
+      )
+    })
   })
 })

@@ -116,6 +116,7 @@ const runWorkerDemo = async () => {
 
   try {
     const basicWorker = queueCraft.createWorker({
+      queueName: 'basic-worker',
       handlers: {
         'user.created': async (payload, metadata) => {
           logger.info(`Processing user.created event`, {
@@ -163,6 +164,7 @@ const runWorkerDemo = async () => {
     })
 
     const errorHandlingWorker = queueCraft.createWorker({
+      queueName: 'notification-worker',
       handlers: {
         'notification.email': async (payload, metadata) => {
           logger.info(`Processing email notification`, {
@@ -263,6 +265,7 @@ const runWorkerDemo = async () => {
     })
 
     const deadLetterWorker = queueCraft.createWorker({
+      queueName: 'dead-letter-worker',
       handlers: {
         'dead-letter': async (payload, metadata) => {
           await processDeadLetterMessage(payload, metadata)

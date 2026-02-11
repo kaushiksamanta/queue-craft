@@ -1,6 +1,7 @@
 import { ConsumeMessage } from 'amqplib'
 import { ConnectionManager } from './connection'
 import {
+  EventHandler,
   EventHandlerMap,
   EventPayloadMap,
   MessageMetadata,
@@ -8,15 +9,18 @@ import {
   RetryOptions,
   RetryOptionsSchema,
   WorkerOptionsSchema,
+  Logger,
 } from './types'
 import { validateSchema } from './utils/validation'
+import { ConsoleLogger } from './logger'
 
-// Default retry options
+const RABBITMQ_QUEUE_NAME_LIMIT = 255
+
 const DEFAULT_RETRY_OPTIONS: RetryOptions = {
   maxRetries: 3,
-  initialDelay: 100, // ms
+  initialDelay: 100,
   backoffFactor: 2,
-  maxDelay: 5000, // 5 seconds
+  maxDelay: 5000,
 }
 
 /**
@@ -29,6 +33,9 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
   private queueName: string
   private consumerTag: string | null = null
   private retryOptions: RetryOptions
+  private logger: Logger
+  private isConsuming = false
+  private boundEvents: Set<string> = new Set()
 
   /**
    * Creates a new Worker instance
@@ -40,11 +47,12 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
     connectionManager: ConnectionManager,
     config: WorkerConfig<T>,
     exchangeName = 'events',
+    logger?: Logger,
   ) {
     this.connectionManager = connectionManager
     this.exchangeName = exchangeName
+    this.logger = logger || new ConsoleLogger()
 
-    // Validate config options if present
     if (config.options) {
       validateSchema(
         WorkerOptionsSchema,
@@ -55,13 +63,11 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
 
     this.config = config
 
-    // Initialize and validate retry options with defaults and any user-provided options
     const combinedRetryOptions = {
       ...DEFAULT_RETRY_OPTIONS,
       ...config.options?.retry,
     }
 
-    // Validate retry options
     this.retryOptions = validateSchema(
       RetryOptionsSchema,
       combinedRetryOptions,
@@ -80,10 +86,72 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
       throw new Error('No events specified for worker')
     }
 
-    this.queueName = `queue.${Array.from(events).join('.')}`
-
     if (!config.handlers) {
       throw new Error('Worker must have handlers defined')
+    }
+
+    if (!config.queueName) {
+      throw new Error(
+        `Worker requires 'queueName' to be specified in config. ` +
+          `Example: { queueName: 'user-service', handlers: {...} }`,
+      )
+    }
+
+    if (config.queueName.length > RABBITMQ_QUEUE_NAME_LIMIT) {
+      throw new Error(
+        `Queue name exceeds RabbitMQ limit of ${RABBITMQ_QUEUE_NAME_LIMIT} characters: ${config.queueName}`,
+      )
+    }
+
+    this.queueName = config.queueName
+  }
+
+  /**
+   * Gets the current queue name
+   * @returns The queue name
+   */
+  getQueueName(): string {
+    return this.queueName
+  }
+
+  /**
+   * Adds a new handler for an event. If the worker is already consuming,
+   * the new event will be bound to the queue immediately.
+   * @param event Event name to handle
+   * @param handler Handler function for the event
+   * @returns Promise that resolves when the handler is added and bound
+   */
+  async addHandler<E extends keyof T & string>(
+    event: E,
+    handler: EventHandler<T, E>,
+  ): Promise<void> {
+    if (!this.config.handlers) {
+      this.config.handlers = {} as EventHandlerMap<T>
+    }
+
+    const handlers = this.config.handlers as EventHandlerMap<T>
+    handlers[event] = handler
+
+    if (this.isConsuming && !this.boundEvents.has(event)) {
+      await this.connectionManager.bindQueue(this.queueName, this.exchangeName, event)
+      this.boundEvents.add(event)
+      this.logger.info(`Dynamically bound event '${event}' to queue '${this.queueName}'`)
+    }
+  }
+
+  /**
+   * Removes a handler for an event.
+   * Note: This does not unbind the event from the queue as RabbitMQ
+   * doesn't support unbinding without knowing the exact binding arguments.
+   * Messages for removed handlers will be sent to the dead letter queue.
+   * @param event Event name to remove handler for
+   */
+  removeHandler<E extends keyof T & string>(event: E): void {
+    if (this.config.handlers) {
+      delete (this.config.handlers as EventHandlerMap<T>)[event]
+      this.logger.info(
+        `Removed handler for event '${event}'. Messages will be sent to dead letter queue.`,
+      )
     }
   }
 
@@ -116,6 +184,7 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
 
     for (const event of events) {
       await this.connectionManager.bindQueue(this.queueName, this.exchangeName, String(event))
+      this.boundEvents.add(event)
     }
   }
 
@@ -141,7 +210,7 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
           try {
             payload = JSON.parse(content)
           } catch (error: any) {
-            console.error(
+            this.logger.error(
               `Failed to parse message content: ${error?.message || 'Unknown error'}`,
               String(event),
               content,
@@ -175,6 +244,7 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
             deadLetter: async () => {
               manualAckUsed = true
               await this.sendToDeadLetterQueue(msg, payload, event as string)
+              channel.ack(msg)
             },
           }
 
@@ -188,14 +258,11 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
             const errorObj =
               error instanceof Error ? error : new Error(error?.message || 'Unknown error')
 
-            // Handle retry automatically
             const retryCount = this.getRetryCount(msg)
             if (retryCount < this.retryOptions.maxRetries) {
-              // Requeue with incremented retry count
               await this.requeueWithRetryCount(msg, payload, event as string, retryCount + 1)
               channel.ack(msg)
             } else {
-              // Max retries exceeded, send to dead letter queue
               await this.sendToDeadLetterQueue(msg, payload, event as string, errorObj)
               channel.ack(msg)
             }
@@ -203,14 +270,15 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
         } catch (error: any) {
           const criticalError =
             error instanceof Error ? error : new Error(error?.message || 'Unknown critical error')
-          console.error('Critical error processing message:', criticalError)
+          this.logger.error('Critical error processing message:', criticalError)
           channel.nack(msg, false, false)
         }
       },
     )
 
     this.consumerTag = consumerTag
-    console.log(`Worker started consuming from queue: ${this.queueName}`)
+    this.isConsuming = true
+    this.logger.info(`Worker started consuming from queue: ${this.queueName}`)
   }
 
   /**
@@ -224,7 +292,7 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
     msg: ConsumeMessage,
   ): Promise<void> {
     if (!this.config.handlers) {
-      console.warn(`No handlers found for event: ${String(event)}`)
+      this.logger.warn(`No handlers found for event: ${String(event)}`)
       await this.sendToDeadLetterQueue(msg, payload, String(event))
       return
     }
@@ -239,7 +307,7 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
       return
     }
 
-    console.warn(`No handler found for event: ${String(event)}. Sending to dead letter queue.`)
+    this.logger.warn(`No handler found for event: ${String(event)}. Sending to dead letter queue.`)
     await this.sendToDeadLetterQueue(msg, payload, String(event))
   }
 
@@ -253,7 +321,7 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
   }
 
   /**
-   * Requeue a message with an updated retry count
+   * Requeue a message with an updated retry count using per-message TTL
    * @private
    */
   private async requeueWithRetryCount(
@@ -262,7 +330,6 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
     routingKey: string,
     retryCount: number,
   ): Promise<void> {
-    // Validate retry count
     if (typeof retryCount !== 'number' || retryCount < 0) {
       throw new Error(`Invalid retry count: ${retryCount}. Must be a non-negative number.`)
     }
@@ -275,43 +342,50 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
     )
 
     try {
-      // If delay > 0, publish directly to delay queue logic here
       if (delay > 0) {
         const delayQueueName = `${this.queueName}.delay`
-        // Check if assertQueue method exists (it might not in tests)
+        const delayExchangeName = `${this.exchangeName}.delay`
+
+        if (typeof channel.assertExchange === 'function') {
+          await channel.assertExchange(delayExchangeName, 'topic', { durable: true })
+        }
+
         if (typeof channel.assertQueue === 'function') {
-          // Ensure delay queue exists
           await channel.assertQueue(delayQueueName, {
             durable: true,
             deadLetterExchange: this.exchangeName,
-            deadLetterRoutingKey: routingKey,
-            messageTtl: delay,
           })
         }
-        // Check if sendToQueue method exists (it might not in tests)
-        if (typeof channel.sendToQueue === 'function') {
-          // Publish to delay queue
-          await channel.sendToQueue(delayQueueName, Buffer.from(JSON.stringify(payload)), {
+
+        if (typeof channel.bindQueue === 'function') {
+          await channel.bindQueue(delayQueueName, delayExchangeName, '#')
+        }
+
+        if (typeof channel.publish === 'function') {
+          channel.publish(delayExchangeName, routingKey, Buffer.from(JSON.stringify(payload)), {
             headers,
+            expiration: String(delay),
+            persistent: true,
           })
         } else {
-          // Fallback for tests
-          console.log(`Would send message to delay queue ${delayQueueName} with delay ${delay}ms`)
+          this.logger.debug(
+            `Would send message to delay exchange ${delayExchangeName} with delay ${delay}ms`,
+          )
         }
       } else if (typeof channel.publish === 'function') {
-        // Otherwise publish directly back to the main exchange if publish method exists
-        await channel.publish(this.exchangeName, routingKey, Buffer.from(JSON.stringify(payload)), {
+        channel.publish(this.exchangeName, routingKey, Buffer.from(JSON.stringify(payload)), {
           headers,
+          persistent: true,
         })
       } else {
-        // Fallback for tests or when publish is not available
-        console.warn('Channel publish method not available - this is expected in tests')
-        // In tests, we can just log the retry attempt
-        console.log(`Would retry message with routing key ${routingKey} (attempt ${retryCount})`)
+        this.logger.warn('Channel publish method not available - this is expected in tests')
+
+        this.logger.debug(
+          `Would retry message with routing key ${routingKey} (attempt ${retryCount})`,
+        )
       }
     } catch (error: any) {
-      // Log the error but don't fail - this allows tests to continue
-      console.error('Error requeuing message:', error?.message || 'Unknown error')
+      this.logger.error('Error requeuing message:', error?.message || 'Unknown error')
     }
   }
 
@@ -348,17 +422,14 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
       }
 
       if (typeof channel.publish === 'function') {
-        await channel.publish(
-          deadLetterExchange,
-          routingKey,
-          Buffer.from(JSON.stringify(payload)),
-          { headers },
-        )
+        channel.publish(deadLetterExchange, routingKey, Buffer.from(JSON.stringify(payload)), {
+          headers,
+        })
       } else {
-        console.log(`Would send message to dead letter queue ${deadLetterQueue}`)
+        this.logger.debug(`Would send message to dead letter queue ${deadLetterQueue}`)
       }
     } catch (error: any) {
-      console.error('Error sending to dead letter queue:', error?.message || 'Unknown error')
+      this.logger.error('Error sending to dead letter queue:', error?.message || 'Unknown error')
     }
   }
 
@@ -371,15 +442,16 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
       try {
         const channel = await this.connectionManager.getChannel()
         await channel.cancel(this.consumerTag)
-        this.consumerTag = null
-        console.log(`Worker stopped consuming from queue: ${this.queueName}`)
+        this.logger.info(`Worker stopped consuming from queue: ${this.queueName}`)
       } catch (error: any) {
         const stopError =
           error instanceof Error
             ? error
             : new Error(error?.message || 'Unknown error stopping worker')
-        console.error('Error stopping worker:', stopError)
+        this.logger.error('Error stopping worker:', stopError)
+      } finally {
         this.consumerTag = null
+        this.isConsuming = false
       }
     }
   }
@@ -392,13 +464,13 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
     await this.stop()
     try {
       await this.connectionManager.close()
-      console.log('Worker connection closed')
+      this.logger.info('Worker connection closed')
     } catch (error: any) {
       const closeError =
         error instanceof Error
           ? error
           : new Error(error?.message || 'Unknown error closing connection')
-      console.error('Error closing worker connection:', closeError)
+      this.logger.error('Error closing worker connection:', closeError)
     }
   }
 }
@@ -408,12 +480,14 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
  * @param connectionManager Connection manager
  * @param config Worker configuration
  * @param exchangeName Exchange name
+ * @param logger Optional logger instance
  * @returns Worker instance
  */
 export function createWorker<T extends EventPayloadMap = EventPayloadMap>(
   connectionManager: ConnectionManager,
   config: WorkerConfig<T>,
   exchangeName = 'events',
+  logger?: Logger,
 ): Worker<T> {
-  return new Worker<T>(connectionManager, config, exchangeName)
+  return new Worker<T>(connectionManager, config, exchangeName, logger)
 }

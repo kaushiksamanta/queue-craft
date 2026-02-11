@@ -3,7 +3,6 @@ import { EventPayloadMap } from '../../src/types'
 import { Worker } from '../../src/worker'
 import { Channel, ConsumeMessage } from 'amqplib'
 
-// Define user created payload interface
 export interface UserCreatedPayload {
   id: string
   name: string
@@ -11,7 +10,6 @@ export interface UserCreatedPayload {
   createdAt: string
 }
 
-// Define order placed payload interface
 export interface OrderPlacedPayload {
   id: string
   userId: string
@@ -20,17 +18,14 @@ export interface OrderPlacedPayload {
   placedAt: string
 }
 
-// Define error test payload interface
 export interface ErrorTestPayload {
   shouldFail: boolean
 }
 
-// Define retry test payload interface
 export interface RetryTestPayload {
   attemptCount: number
 }
 
-// Define type-safe payload map for our tests
 export interface TestEventPayloadMap extends EventPayloadMap {
   'user.created': UserCreatedPayload
   'order.placed': OrderPlacedPayload
@@ -38,7 +33,6 @@ export interface TestEventPayloadMap extends EventPayloadMap {
   'retry.test': RetryTestPayload
 }
 
-// Mock message type for testing
 export interface TestMessage {
   content: Buffer
   fields: {
@@ -55,7 +49,6 @@ export interface TestMessage {
   }
 }
 
-// Define the Worker private methods we need to spy on
 export interface WorkerPrivateMethods {
   requeueWithRetryCount(
     msg: ConsumeMessage,
@@ -71,7 +64,6 @@ export interface WorkerPrivateMethods {
   ): Promise<void>
 }
 
-// Define worker type to help with type checking
 export type TestWorker =
   | Worker<TestEventPayloadMap>
   | Worker<Pick<TestEventPayloadMap, 'user.created'>>
@@ -79,7 +71,6 @@ export type TestWorker =
   | Worker<Pick<TestEventPayloadMap, 'retry.test'>>
   | Worker<Pick<TestEventPayloadMap, 'user.created' | 'order.placed'>>
 
-// Define the mock channel type
 export type MockChannel = Partial<Channel> & {
   assertExchange: ReturnType<typeof vi.fn>
   assertQueue: ReturnType<typeof vi.fn>
@@ -93,7 +84,6 @@ export type MockChannel = Partial<Channel> & {
   close: ReturnType<typeof vi.fn>
 }
 
-// Define the mock connection manager type
 export interface MockConnectionManager {
   connect: ReturnType<typeof vi.fn>
   getChannel: ReturnType<typeof vi.fn>
