@@ -148,7 +148,7 @@ const worker = queueCraft.createWorker({
   },
 
   options: {
-    prefetch: 10,              // Messages to prefetch (default: 1)
+    prefetch: 10,              // Optional: if omitted, broker default prefetch is used
     queue: {
       durable: true,           // Survive broker restart
       exclusive: false,        // Single consumer only
@@ -312,9 +312,12 @@ handlers: {
 
 ### Dead Letter Queue Processing
 
-Create a dedicated worker to process failed messages from the dead letter queue:
+Create a dedicated worker to process failed messages from the dead letter queue.
+Use the dead-letter exchange name (`${originalExchange}.dead-letter`) from your source worker:
 
 ```typescript
+const deadLetterExchange = 'events.dead-letter';
+
 const dlqWorker = queueCraft.createWorker({
   queueName: 'my-queue.dead-letter',
   handlers: {
@@ -331,10 +334,10 @@ const dlqWorker = queueCraft.createWorker({
       // Handle failed order events
     },
   },
-});
+}, deadLetterExchange);
 ```
 
-> **Note:** Messages without a matching handler will remain in the dead letter queue. Ensure you have handlers for all event types that might fail.
+> **Note:** If a DLQ worker has no matching handler, QueueCraft dead-letters the message again. Ensure you define handlers for all expected failed routing keys.
 
 ---
 
@@ -477,24 +480,35 @@ import { createFromEnv } from 'queue-craft';
 const queueCraft = createFromEnv<MyEvents>();
 ```
 
-Required environment variables:
-- `RABBITMQ_HOST`
-- `RABBITMQ_PORT`
-- `RABBITMQ_USERNAME`
-- `RABBITMQ_PASSWORD`
+Environment variables used by `createFromEnv` (all optional):
+- `RABBITMQ_HOST` (default: `localhost`)
+- `RABBITMQ_PORT` (default: `5672`)
+- `RABBITMQ_USERNAME` (default: `guest`)
+- `RABBITMQ_PASSWORD` (default: `guest`)
 - `RABBITMQ_VHOST` (optional)
+- `RABBITMQ_TIMEOUT` (optional; ms)
+- `RABBITMQ_HEARTBEAT` (optional; seconds)
+- `RABBITMQ_EXCHANGE_TYPE` (default: `topic`)
+- `RABBITMQ_EXCHANGE_DURABLE` (default: `true`)
+- `RABBITMQ_EXCHANGE_AUTODELETE` (default: `false`)
 
 ### Custom Logger
 
 ```typescript
-import { WinstonLogger } from 'queue-craft';
+import { QueueCraft, Logger } from 'queue-craft';
 import winston from 'winston';
 
-const logger = new WinstonLogger({
+const baseLogger = winston.createLogger({
   level: 'info',
-  colorize: true,
-  timestamp: true,
-  silent: false,  // Set to true for testing
+  format: winston.format.json(),
+  transports: [new winston.transports.Console()],
+});
+
+const logger: Logger = {
+  debug: (message, ...meta) => baseLogger.debug(message, ...meta),
+  info: (message, ...meta) => baseLogger.info(message, ...meta),
+  warn: (message, ...meta) => baseLogger.warn(message, ...meta),
+  error: (message, ...meta) => baseLogger.error(message, ...meta),
 });
 
 const queueCraft = new QueueCraft<MyEvents>({

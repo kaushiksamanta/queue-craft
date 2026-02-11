@@ -52,7 +52,7 @@ flowchart LR
 | **Producer** | Application that sends messages | `Publisher` class |
 | **Exchange** | Receives messages and routes them to queues | Auto-created on publish |
 | **Binding** | Rule linking exchange to queue with routing pattern | Auto-created from handlers |
-| **Queue** | Buffer storing messages until consumed | Named via `queueName` or `serviceName` |
+| **Queue** | Buffer storing messages until consumed | Named via required `queueName` |
 | **Consumer** | Application receiving and processing messages | `Worker` class |
 
 ---
