@@ -34,7 +34,7 @@ describe('Validation Utils', () => {
     it('should throw error for invalid data', () => {
       const invalidData = {
         name: 'John Doe',
-        age: '30', // should be a number
+        age: '30',
       }
 
       expect(() => validateSchema(TestSchema, invalidData)).toThrow()
@@ -43,7 +43,7 @@ describe('Validation Utils', () => {
     it('should throw error with custom message', () => {
       const invalidData = {
         name: 'John Doe',
-        age: '30', // should be a number
+        age: '30',
       }
 
       const customMessage = 'Custom validation error message'
@@ -53,7 +53,6 @@ describe('Validation Utils', () => {
     it('should throw error for missing required fields', () => {
       const invalidData = {
         name: 'John Doe',
-        // missing age field
       }
 
       expect(() => validateSchema(TestSchema, invalidData)).toThrow()
@@ -83,7 +82,7 @@ describe('Validation Utils', () => {
     it('should return false for invalid data', () => {
       const invalidData = {
         name: 'John Doe',
-        age: '30', // should be a number
+        age: '30',
       }
 
       expect(isValid(TestSchema, invalidData)).toBe(false)
@@ -92,7 +91,6 @@ describe('Validation Utils', () => {
     it('should return false for missing required fields', () => {
       const invalidData = {
         name: 'John Doe',
-        // missing age field
       }
 
       expect(isValid(TestSchema, invalidData)).toBe(false)

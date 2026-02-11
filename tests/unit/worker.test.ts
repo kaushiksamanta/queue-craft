@@ -5,7 +5,6 @@ import { Worker } from '../../src/worker'
 import { WorkerConfig, MessageMetadata, Logger } from '../../src/types'
 import { ConsumeMessage } from 'amqplib'
 
-// Silent logger for tests
 const silentLogger: Logger = {
   debug: vi.fn(),
   info: vi.fn(),
@@ -363,7 +362,7 @@ describe('Worker', () => {
 
     expect(specificHandlers['user.created']).toHaveBeenCalled()
     expect(dlqSpy).toHaveBeenCalled()
-    expect(ackSpy).not.toHaveBeenCalled()
+    expect(ackSpy).toHaveBeenCalledWith(message)
 
     dlqSpy.mockRestore()
   })
@@ -413,6 +412,48 @@ describe('Worker', () => {
     requeueSpy.mockRestore()
   })
 
+  it('should preserve original routing key for delayed retries', async () => {
+    const channel = await connectionManager.getChannel()
+
+    const message: TestMessage = {
+      content: Buffer.from(JSON.stringify({ id: '123', name: 'John' })),
+      fields: { routingKey: 'user.created' },
+      properties: {
+        headers: {},
+      },
+    }
+
+    await (worker as unknown as WorkerPrivateMethods).requeueWithRetryCount(
+      message as unknown as ConsumeMessage,
+      { id: '123', name: 'John' },
+      'user.created',
+      1,
+    )
+
+    expect(channel.assertExchange).toHaveBeenCalledWith('test-exchange.delay', 'topic', {
+      durable: true,
+    })
+    expect(channel.assertQueue).toHaveBeenCalledWith('test-worker-queue.delay', {
+      durable: true,
+      deadLetterExchange: 'test-exchange',
+    })
+    expect(channel.bindQueue).toHaveBeenCalledWith(
+      'test-worker-queue.delay',
+      'test-exchange.delay',
+      '#',
+    )
+    expect(channel.publish).toHaveBeenCalledWith(
+      'test-exchange.delay',
+      'user.created',
+      expect.any(Buffer),
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'x-retry-count': 1 }),
+        expiration: '100',
+        persistent: true,
+      }),
+    )
+  })
+
   describe('Queue Naming Strategies', () => {
     it('should use explicit queueName when provided', () => {
       const config: WorkerConfig<TestEventPayloadMap> = {
@@ -425,7 +466,6 @@ describe('Worker', () => {
     })
 
     it('should keep same queue name when handlers change', () => {
-      // This tests that queueName provides stable queue names
       const config1: WorkerConfig<TestEventPayloadMap> = {
         handlers: {
           'user.created': specificHandlers['user.created'],
@@ -444,7 +484,6 @@ describe('Worker', () => {
       const worker1 = new Worker(connectionManager, config1, 'test-exchange', silentLogger)
       const worker2 = new Worker(connectionManager, config2, 'test-exchange', silentLogger)
 
-      // Both should have the same queue name regardless of handlers
       expect(worker1.getQueueName()).toBe('user-service')
       expect(worker2.getQueueName()).toBe('user-service')
     })
@@ -485,7 +524,6 @@ describe('Worker', () => {
       const newHandler = vi.fn().mockResolvedValue(undefined)
       await customWorker.addHandler('user.deleted', newHandler)
 
-      // Handler should be added but not bound yet (not consuming)
       expect(connectionManager.bindQueue).not.toHaveBeenCalledWith(
         'test-queue',
         'test-exchange',
@@ -516,13 +554,11 @@ describe('Worker', () => {
 
       await customWorker.start()
 
-      // Clear previous calls
       vi.mocked(connectionManager.bindQueue).mockClear()
 
       const newHandler = vi.fn().mockResolvedValue(undefined)
       await customWorker.addHandler('user.deleted', newHandler)
 
-      // Handler should be bound immediately since worker is consuming
       expect(connectionManager.bindQueue).toHaveBeenCalledWith(
         'dynamic-test-queue',
         'test-exchange',
@@ -541,7 +577,6 @@ describe('Worker', () => {
       const customWorker = new Worker(connectionManager, config, 'test-exchange', silentLogger)
       customWorker.removeHandler('user.created')
 
-      // Verify handler was removed by checking logger was called
       expect(silentLogger.info).toHaveBeenCalledWith(
         expect.stringContaining("Removed handler for event 'user.created'"),
       )

@@ -18,9 +18,9 @@ const RABBITMQ_QUEUE_NAME_LIMIT = 255
 
 const DEFAULT_RETRY_OPTIONS: RetryOptions = {
   maxRetries: 3,
-  initialDelay: 100, // ms
+  initialDelay: 100,
   backoffFactor: 2,
-  maxDelay: 5000, // 5 seconds
+  maxDelay: 5000,
 }
 
 /**
@@ -129,10 +129,9 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
       this.config.handlers = {} as EventHandlerMap<T>
     }
 
-    // Add handler to the map
-    (this.config.handlers as EventHandlerMap<T>)[event] = handler
+    const handlers = this.config.handlers as EventHandlerMap<T>
+    handlers[event] = handler
 
-    // If already consuming, bind the new event to the queue
     if (this.isConsuming && !this.boundEvents.has(event)) {
       await this.connectionManager.bindQueue(this.queueName, this.exchangeName, event)
       this.boundEvents.add(event)
@@ -245,6 +244,7 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
             deadLetter: async () => {
               manualAckUsed = true
               await this.sendToDeadLetterQueue(msg, payload, event as string)
+              channel.ack(msg)
             },
           }
 
@@ -258,14 +258,11 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
             const errorObj =
               error instanceof Error ? error : new Error(error?.message || 'Unknown error')
 
-            // Handle retry automatically
             const retryCount = this.getRetryCount(msg)
             if (retryCount < this.retryOptions.maxRetries) {
-              // Requeue with incremented retry count
               await this.requeueWithRetryCount(msg, payload, event as string, retryCount + 1)
               channel.ack(msg)
             } else {
-              // Max retries exceeded, send to dead letter queue
               await this.sendToDeadLetterQueue(msg, payload, event as string, errorObj)
               channel.ack(msg)
             }
@@ -333,7 +330,6 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
     routingKey: string,
     retryCount: number,
   ): Promise<void> {
-    // Validate retry count
     if (typeof retryCount !== 'number' || retryCount < 0) {
       throw new Error(`Invalid retry count: ${retryCount}. Must be a non-negative number.`)
     }
@@ -346,49 +342,49 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
     )
 
     try {
-      // Use a single delay queue with per-message TTL (expiration property)
-      // This avoids the issue of queue properties being immutable
       if (delay > 0) {
         const delayQueueName = `${this.queueName}.delay`
-        // Check if assertQueue method exists (it might not in tests)
+        const delayExchangeName = `${this.exchangeName}.delay`
+
+        if (typeof channel.assertExchange === 'function') {
+          await channel.assertExchange(delayExchangeName, 'topic', { durable: true })
+        }
+
         if (typeof channel.assertQueue === 'function') {
-          // Ensure delay queue exists - NO messageTtl here, we use per-message expiration
           await channel.assertQueue(delayQueueName, {
             durable: true,
             deadLetterExchange: this.exchangeName,
-            deadLetterRoutingKey: routingKey,
           })
         }
-        // Check if sendToQueue method exists (it might not in tests)
-        if (typeof channel.sendToQueue === 'function') {
-          // Publish to delay queue with per-message TTL via expiration property
-          channel.sendToQueue(delayQueueName, Buffer.from(JSON.stringify(payload)), {
+
+        if (typeof channel.bindQueue === 'function') {
+          await channel.bindQueue(delayQueueName, delayExchangeName, '#')
+        }
+
+        if (typeof channel.publish === 'function') {
+          channel.publish(delayExchangeName, routingKey, Buffer.from(JSON.stringify(payload)), {
             headers,
-            expiration: String(delay), // Per-message TTL in milliseconds
+            expiration: String(delay),
             persistent: true,
           })
         } else {
-          // Fallback for tests
           this.logger.debug(
-            `Would send message to delay queue ${delayQueueName} with delay ${delay}ms`,
+            `Would send message to delay exchange ${delayExchangeName} with delay ${delay}ms`,
           )
         }
       } else if (typeof channel.publish === 'function') {
-        // Otherwise publish directly back to the main exchange if publish method exists
         channel.publish(this.exchangeName, routingKey, Buffer.from(JSON.stringify(payload)), {
           headers,
           persistent: true,
         })
       } else {
-        // Fallback for tests or when publish is not available
         this.logger.warn('Channel publish method not available - this is expected in tests')
-        // In tests, we can just log the retry attempt
+
         this.logger.debug(
           `Would retry message with routing key ${routingKey} (attempt ${retryCount})`,
         )
       }
     } catch (error: any) {
-      // Log the error but don't fail - this allows tests to continue
       this.logger.error('Error requeuing message:', error?.message || 'Unknown error')
     }
   }
@@ -426,12 +422,9 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
       }
 
       if (typeof channel.publish === 'function') {
-        channel.publish(
-          deadLetterExchange,
-          routingKey,
-          Buffer.from(JSON.stringify(payload)),
-          { headers },
-        )
+        channel.publish(deadLetterExchange, routingKey, Buffer.from(JSON.stringify(payload)), {
+          headers,
+        })
       } else {
         this.logger.debug(`Would send message to dead letter queue ${deadLetterQueue}`)
       }
@@ -457,7 +450,6 @@ export class Worker<T extends EventPayloadMap = EventPayloadMap> {
             : new Error(error?.message || 'Unknown error stopping worker')
         this.logger.error('Error stopping worker:', stopError)
       } finally {
-        // Always reset state regardless of success or failure
         this.consumerTag = null
         this.isConsuming = false
       }

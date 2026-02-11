@@ -67,7 +67,6 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
    * @param config QueueCraft configuration
    */
   constructor(config: QueueCraftConfig & { reconnection?: ReconnectionOptions }) {
-    // Validate QueueCraft configuration
     validateSchema(
       QueueCraftConfigSchema,
       config,
@@ -96,8 +95,7 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
     if (this.isClosed) {
       throw new Error('QueueCraft instance has been closed')
     }
-    
-    // Validate publisher options
+
     validateSchema(
       PublisherOptionsSchema,
       options,
@@ -132,8 +130,7 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
     if (this.isClosed) {
       throw new Error('QueueCraft instance has been closed')
     }
-    
-    // Validate worker config options if present
+
     if (config.options) {
       validateSchema(
         WorkerOptionsSchema,
@@ -142,17 +139,15 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
       )
     }
 
-    // Determine events to use for the key based on handlers
     let events: string[] = []
 
     if (config.handlers) {
       if (typeof config.handlers === 'object') {
-        // Handlers is a direct event handler map
         events = Object.keys(config.handlers)
       }
     }
 
-    const key = `worker:${exchangeName}:${events.join('.')}`
+    const key = `worker:${exchangeName}:${config.queueName}:${events.join('.')}`
 
     if (!this.workers.has(key)) {
       const worker = createWorker<T>(this.connectionManager, config, exchangeName)
@@ -278,38 +273,32 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
       this.logger.info('Graceful shutdown initiated')
 
       let timeoutId: NodeJS.Timeout | undefined
-      
+
       try {
-        // Run before shutdown callback
         if (beforeShutdown) {
           await beforeShutdown()
         }
 
-        // Create a timeout promise
         const timeoutPromise = new Promise<never>((_, reject) => {
           timeoutId = setTimeout(() => {
             reject(new Error(`Graceful shutdown timed out after ${timeout}ms`))
           }, timeout)
         })
 
-        // Race between close and timeout
         await Promise.race([this.close(), timeoutPromise])
-        
-        // Clear timeout on success
+
         if (timeoutId) {
           clearTimeout(timeoutId)
         }
 
         this.logger.info('Graceful shutdown completed successfully')
 
-        // Run after shutdown callback
         if (afterShutdown) {
           await afterShutdown()
         }
 
         process.exit(0)
       } catch (error) {
-        // Clear timeout on error too
         if (timeoutId) {
           clearTimeout(timeoutId)
         }
@@ -318,7 +307,6 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
       }
     }
 
-    // Register signal handlers
     for (const signal of signals) {
       process.on(signal, this.boundShutdownHandler)
     }
@@ -354,24 +342,19 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
     this.logger.info('Closing QueueCraft instance')
     const closePromises: Promise<void>[] = []
 
-    // Close all workers
     for (const worker of this.workers.values()) {
       closePromises.push(worker.stop())
     }
 
-    // Wait for all workers to stop
     await Promise.all(closePromises)
     this.logger.debug('All workers stopped')
 
-    // Close connection manager
     await this.connectionManager.close()
     this.logger.debug('Connection manager closed')
 
-    // Clear maps
     this.publishers.clear()
     this.workers.clear()
-    
-    // Mark as closed
+
     this.isClosed = true
 
     this.logger.info('QueueCraft instance closed successfully')
@@ -385,31 +368,33 @@ export class QueueCraft<T extends Record<string, any> = EventPayloadMap> {
 export function createFromEnv<T extends EventPayloadMap = EventPayloadMap>(
   options: { logger?: Logger } = {},
 ): QueueCraft<T> {
-  // Load environment variables
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     require('dotenv').config()
-  } catch (error) {
-    // Ignore if dotenv is not available
-  }
+  } catch {}
 
-  // Create logger if not provided
   const logger = options.logger || new ConsoleLogger()
 
   logger.debug('Creating QueueCraft instance from environment variables')
 
+  const parseIntSafe = (value: string | undefined, defaultValue: number): number => {
+    if (!value) return defaultValue
+    const parsed = parseInt(value, 10)
+    return isNaN(parsed) ? defaultValue : parsed
+  }
+
   const config: QueueCraftConfig = {
     connection: {
       host: process.env.RABBITMQ_HOST || 'localhost',
-      port: parseInt(process.env.RABBITMQ_PORT || '5672'),
+      port: parseIntSafe(process.env.RABBITMQ_PORT, 5672),
       username: process.env.RABBITMQ_USERNAME || 'guest',
       password: process.env.RABBITMQ_PASSWORD || 'guest',
       vhost: process.env.RABBITMQ_VHOST,
       timeout: process.env.RABBITMQ_TIMEOUT
-        ? parseInt(process.env.RABBITMQ_TIMEOUT, 10)
+        ? parseIntSafe(process.env.RABBITMQ_TIMEOUT, 30000)
         : undefined,
       heartbeat: process.env.RABBITMQ_HEARTBEAT
-        ? parseInt(process.env.RABBITMQ_HEARTBEAT, 10)
+        ? parseIntSafe(process.env.RABBITMQ_HEARTBEAT, 60)
         : undefined,
     },
     defaultExchange: {

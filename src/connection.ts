@@ -79,6 +79,18 @@ export class ConnectionManager extends EventEmitter {
   private connectionCloseHandler?: () => void
   private channelErrorHandler?: (err: Error) => void
   private channelCloseHandler?: () => void
+  private confirmChannelErrorHandler?: (err: Error) => void
+  private confirmChannelCloseHandler?: () => void
+
+  /**
+   * Emits error events only when listeners are attached.
+   * EventEmitter throws on unhandled 'error' events, which would crash consumers.
+   */
+  private emitErrorSafely(error: Error): void {
+    if (this.listenerCount('error') > 0) {
+      this.emit('error', error)
+    }
+  }
 
   /**
    * Creates a new ConnectionManager instance
@@ -97,7 +109,6 @@ export class ConnectionManager extends EventEmitter {
   ) {
     super()
 
-    // Validate connection options at runtime using TypeBox
     validateSchema(
       ConnectionOptionsSchema,
       options,
@@ -150,39 +161,37 @@ export class ConnectionManager extends EventEmitter {
         })
 
         if (this.connection) {
-          // Store handlers so we can remove them on close
           this.connectionErrorHandler = (err: Error) => {
             this.logger.error('RabbitMQ connection error:', err)
-            this.emit('error', err)
+            this.emitErrorSafely(err)
             this.handleConnectionError(err)
           }
-          
+
           this.connectionCloseHandler = () => {
             this.logger.warn('RabbitMQ connection closed')
             this.handleConnectionError()
           }
-          
+
           this.connection.on('error', this.connectionErrorHandler)
           this.connection.on('close', this.connectionCloseHandler)
 
           this.channel = await this.connection.createChannel()
-          
-          // Store channel handlers so we can remove them on close
+
           this.channelErrorHandler = (err: Error) => {
             this.logger.error('RabbitMQ channel error:', err)
-            this.emit('error', err)
+            this.emitErrorSafely(err)
           }
-          
+
           this.channelCloseHandler = () => {
             this.logger.warn('RabbitMQ channel closed')
             this.channel = null
-            // Also invalidate confirm channel as it uses the same connection
+
             this.confirmChannel = null
           }
-          
+
           this.channel.on('error', this.channelErrorHandler)
           this.channel.on('close', this.channelCloseHandler)
-          
+
           this.lastConnectedAt = new Date()
           this.logger.info('Connected to RabbitMQ')
           this.emit('connected', { timestamp: this.lastConnectedAt })
@@ -308,12 +317,10 @@ export class ConnectionManager extends EventEmitter {
   ): Promise<Replies.AssertExchange> {
     const channel = await this.getChannel()
 
-    // Skip if already set up
     if (this.setupExchanges.has(name)) {
       return { exchange: name }
     }
 
-    // Validate exchange options with name added
     const fullOptions = { name, ...options }
     validateSchema(
       ExchangeOptionsSchema,
@@ -345,12 +352,10 @@ export class ConnectionManager extends EventEmitter {
   ): Promise<Replies.AssertQueue> {
     const channel = await this.getChannel()
 
-    // Skip if already set up
     if (this.setupQueues.has(name)) {
       return { queue: name, messageCount: 0, consumerCount: 0 }
     }
 
-    // Validate queue options with name added
     const fullOptions = { name, ...options }
     validateSchema(
       QueueOptionsSchema,
@@ -409,6 +414,19 @@ export class ConnectionManager extends EventEmitter {
       }
 
       this.confirmChannel = await this.connection.createConfirmChannel()
+
+      this.confirmChannelErrorHandler = (err: Error) => {
+        this.logger.error('RabbitMQ confirm channel error:', err)
+        this.emitErrorSafely(err)
+      }
+
+      this.confirmChannelCloseHandler = () => {
+        this.logger.warn('RabbitMQ confirm channel closed')
+        this.confirmChannel = null
+      }
+
+      this.confirmChannel.on('error', this.confirmChannelErrorHandler)
+      this.confirmChannel.on('close', this.confirmChannelCloseHandler)
     }
 
     return this.confirmChannel
@@ -442,16 +460,13 @@ export class ConnectionManager extends EventEmitter {
    * @returns Promise that resolves when the connection is closed
    */
   async close(): Promise<void> {
-    // Clear any pending reconnection timer
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = undefined
     }
 
-    // Disable auto-reconnect during close
     this.isReconnecting = false
 
-    // Remove event listeners to prevent memory leaks
     if (this.channel) {
       if (this.channelErrorHandler) {
         this.channel.removeListener('error', this.channelErrorHandler)
@@ -460,7 +475,7 @@ export class ConnectionManager extends EventEmitter {
         this.channel.removeListener('close', this.channelCloseHandler)
       }
     }
-    
+
     if (this.connection) {
       if (this.connectionErrorHandler) {
         this.connection.removeListener('error', this.connectionErrorHandler)
@@ -471,6 +486,12 @@ export class ConnectionManager extends EventEmitter {
     }
 
     if (this.confirmChannel) {
+      if (this.confirmChannelErrorHandler) {
+        this.confirmChannel.removeListener('error', this.confirmChannelErrorHandler)
+      }
+      if (this.confirmChannelCloseHandler) {
+        this.confirmChannel.removeListener('close', this.confirmChannelCloseHandler)
+      }
       try {
         await this.confirmChannel.close()
       } catch (error) {
@@ -497,16 +518,16 @@ export class ConnectionManager extends EventEmitter {
       this.connection = null
     }
 
-    // Clear handler references
     this.connectionErrorHandler = undefined
     this.connectionCloseHandler = undefined
     this.channelErrorHandler = undefined
     this.channelCloseHandler = undefined
+    this.confirmChannelErrorHandler = undefined
+    this.confirmChannelCloseHandler = undefined
 
     this.setupExchanges.clear()
     this.setupQueues.clear()
-    
-    // Remove all EventEmitter listeners
+
     this.removeAllListeners()
   }
 }

@@ -2,8 +2,31 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { ConnectionManager } from '../../src/connection'
 import * as amqp from 'amqplib'
 
+interface MockChannel {
+  assertExchange: ReturnType<typeof vi.fn>
+  assertQueue: ReturnType<typeof vi.fn>
+  bindQueue: ReturnType<typeof vi.fn>
+  prefetch: ReturnType<typeof vi.fn>
+  close: ReturnType<typeof vi.fn>
+  on: ReturnType<typeof vi.fn>
+  removeListener: ReturnType<typeof vi.fn>
+}
+
+interface MockConnection {
+  createChannel: ReturnType<typeof vi.fn>
+  on: ReturnType<typeof vi.fn>
+  removeListener: ReturnType<typeof vi.fn>
+  close: ReturnType<typeof vi.fn>
+}
+
+interface AmqpMockModule {
+  connect: ReturnType<typeof vi.fn>
+  __mockChannel: MockChannel
+  __mockConnection: MockConnection
+}
+
 vi.mock('amqplib', () => {
-  const mockChannel = {
+  const channel: MockChannel = {
     assertExchange: vi.fn().mockResolvedValue({ exchange: 'test-exchange' }),
     assertQueue: vi
       .fn()
@@ -15,15 +38,17 @@ vi.mock('amqplib', () => {
     removeListener: vi.fn(),
   }
 
-  const mockConnection = {
-    createChannel: vi.fn().mockResolvedValue(mockChannel),
+  const connection: MockConnection = {
+    createChannel: vi.fn().mockResolvedValue(channel),
     on: vi.fn(),
     removeListener: vi.fn(),
     close: vi.fn().mockResolvedValue({}),
   }
 
   return {
-    connect: vi.fn().mockResolvedValue(mockConnection),
+    connect: vi.fn().mockResolvedValue(connection),
+    __mockChannel: channel,
+    __mockConnection: connection,
   }
 })
 
@@ -34,6 +59,14 @@ describe('ConnectionManager', () => {
     port: 5672,
     username: 'guest',
     password: 'guest',
+  }
+
+  const getMocks = (): { mockChannel: MockChannel; mockConnection: MockConnection } => {
+    const mockedAmqp = amqp as unknown as AmqpMockModule
+    return {
+      mockChannel: mockedAmqp.__mockChannel,
+      mockConnection: mockedAmqp.__mockConnection,
+    }
   }
 
   beforeEach(() => {
@@ -71,9 +104,7 @@ describe('ConnectionManager', () => {
   it('should assert exchange', async () => {
     await connectionManager.assertExchange('test-exchange')
 
-    const mockConnection = await (amqp.connect as any)()
-    const mockChannel = await mockConnection.createChannel()
-
+    const { mockChannel } = getMocks()
     expect(mockChannel.assertExchange).toHaveBeenCalledWith(
       'test-exchange',
       'topic',
@@ -87,9 +118,7 @@ describe('ConnectionManager', () => {
   it('should assert queue', async () => {
     await connectionManager.assertQueue('test-queue')
 
-    const mockConnection = await (amqp.connect as any)()
-    const mockChannel = await mockConnection.createChannel()
-
+    const { mockChannel } = getMocks()
     expect(mockChannel.assertQueue).toHaveBeenCalledWith(
       'test-queue',
       expect.objectContaining({
@@ -103,9 +132,7 @@ describe('ConnectionManager', () => {
   it('should bind queue to exchange', async () => {
     await connectionManager.bindQueue('test-queue', 'test-exchange', 'test-pattern')
 
-    const mockConnection = await (amqp.connect as any)()
-    const mockChannel = await mockConnection.createChannel()
-
+    const { mockChannel } = getMocks()
     expect(mockChannel.bindQueue).toHaveBeenCalledWith(
       'test-queue',
       'test-exchange',
@@ -116,9 +143,7 @@ describe('ConnectionManager', () => {
   it('should set prefetch count', async () => {
     await connectionManager.setPrefetch(10)
 
-    const mockConnection = await (amqp.connect as any)()
-    const mockChannel = await mockConnection.createChannel()
-
+    const { mockChannel } = getMocks()
     expect(mockChannel.prefetch).toHaveBeenCalledWith(10)
   })
 
@@ -126,10 +151,22 @@ describe('ConnectionManager', () => {
     await connectionManager.connect()
     await connectionManager.close()
 
-    const mockConnection = await (amqp.connect as any)()
-    const mockChannel = await mockConnection.createChannel()
-
+    const { mockChannel, mockConnection } = getMocks()
     expect(mockChannel.close).toHaveBeenCalled()
     expect(mockConnection.close).toHaveBeenCalled()
+  })
+
+  it('should not throw when connection emits error without listeners', async () => {
+    await connectionManager.connect()
+
+    const { mockConnection } = getMocks()
+    type ErrorHandlerCall = [string, (err: Error) => void]
+    const errorHandlerCall = mockConnection.on.mock.calls.find(
+      (call): call is ErrorHandlerCall => call[0] === 'error'
+    )
+    const errorHandler = errorHandlerCall?.[1]
+
+    expect(errorHandler).toBeDefined()
+    expect(() => errorHandler!(new Error('connection failure'))).not.toThrow()
   })
 })
